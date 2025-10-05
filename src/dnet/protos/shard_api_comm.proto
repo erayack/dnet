@@ -6,9 +6,15 @@ package shardapi;
 service ShardApiService {
     // Send final activation from shard to API for token generation
     rpc SendFinalActivation(FinalActivationRequest) returns (FinalActivationResponse);
-    
+
     // Send generated token back from API to first shard
     rpc SendToken(TokenRequest) returns (TokenResponse);
+
+    // Load model on shard
+    rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
+
+    // Unload model from shard
+    rpc UnloadModel(UnloadModelRequest) returns (UnloadModelResponse);
 }
 
 // Final activation data from last layer
@@ -49,4 +55,29 @@ message RingError {
     string failed_node = 2;         // Node that failed
     string error_code = 3;          // Error code
     string error = 4;               // Error description
+}
+// Load model request
+message LoadModelRequest {
+    string model_path = 1;
+    repeated int32 layers = 2;
+    bool warmup = 3;
+}
+
+// Load model response
+message LoadModelResponse {
+    bool success = 1;
+    string message = 2;
+    repeated int32 layers_loaded = 3;
+    float load_time_ms = 4;
+}
+
+// Unload model request
+message UnloadModelRequest {
+    // Empty for now
+}
+
+// Unload model response
+message UnloadModelResponse {
+    bool success = 1;
+    string message = 2;
 }
