@@ -216,6 +216,7 @@ class LayerAssignment(BaseModel):
 
     service_name: str = Field(..., description="Target device service name")
     layers: List[int] = Field(..., description="Layer indices assigned to this device")
+    next_node_service_name: Optional[str] = Field(None, description="Next node service name in ring (null if last)")
 
 
 class PrepareTopologyResponse(BaseModel):

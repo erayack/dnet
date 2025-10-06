@@ -13,7 +13,6 @@ async def serve(
     grpc_port: int,
     http_port: int,
     queue_size: int = 10,
-    prefetch_window: int = 2,
 ) -> None:
     """Serve the shard node.
 
@@ -21,7 +20,6 @@ async def serve(
         grpc_port: gRPC server port
         http_port: HTTP server port
         queue_size: Activation queue size
-        prefetch_window: Number of layers to prefetch ahead
     """
     node_id = random.randint(0, 1000)
     shard_node = RingShardNode(
@@ -29,7 +27,6 @@ async def serve(
         listen_port=grpc_port,
         http_port=http_port,
         queue_size=queue_size,
-        prefetch_window_size=prefetch_window,
     )
 
     # Handle shutdown signals gracefully
@@ -52,7 +49,7 @@ def main() -> None:
     """Run dnet ring shard server.
 
     The shard server runs without a preloaded model. The API will send
-    LoadModel commands via gRPC to configure which layers to load.
+    LoadModel commands via HTTP to configure which layers to load.
     """
     ap = ArgumentParser(description="dnet ring shard server")
     ap.add_argument(
@@ -75,13 +72,6 @@ def main() -> None:
         default=10,
         help="Activation queue size (default: 10)",
     )
-    ap.add_argument(
-        "-w",
-        "--prefetch-window",
-        type=int,
-        default=2,
-        help="Number of layers to prefetch ahead (default: 2)",
-    )
     args = ap.parse_args()
 
     logger.info(
@@ -93,7 +83,6 @@ def main() -> None:
             args.grpc_port,
             args.http_port,
             args.queue_size,
-            args.prefetch_window,
         )
     )
 

@@ -8,10 +8,9 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import grpc
 import httpx
 import mlx.core as mx
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
 from grpc import aio as aio_grpc
 from hypercorn import Config
@@ -24,10 +23,8 @@ from dperf.profiler import ModelProfileSplit
 from dsolver import DeviceProfile, halda_solve
 from dsolver.gurobi_solver import HALDAResult
 
-from ...protos import dnet_ring_pb2, shard_api_comm_pb2
 from ...protos.dnet_ring_pb2_grpc import DnetRingServiceStub
 from ...protos.shard_api_comm_pb2_grpc import (
-    ShardApiServiceStub as ShardApiStub,
     add_ShardApiServiceServicer_to_server,
 )
 
@@ -49,8 +46,6 @@ from ..api_models import (
     LoadModelResponse,
     PrepareTopologyRequest,
     PrepareTopologyResponse,
-    RecieveResultRequest,
-    RingInferenceError,
     RoleMapping,
     ShardLoadStatus,
 )
@@ -327,8 +322,8 @@ class RingApiNode:
         # Run solver
         device_names, solution = await self._run_solver(shard_profiles, model_profile)
 
-        # Compute layer assignments
-        layer_assignments = self._compute_layer_assignments(
+        # Compute layer assignments, next node mapping, and prefetch windows
+        layer_assignments, next_node_map, prefetch_windows = self._compute_layer_assignments(
             device_names, solution, shards
         )
 
@@ -338,6 +333,8 @@ class RingApiNode:
             "num_layers": model_metadata.num_layers,
             "devices": device_names,
             "assignments": layer_assignments,
+            "next_node_map": next_node_map,
+            "prefetch_windows": prefetch_windows,
             "solution": asdict(solution),
         }
 
@@ -356,6 +353,7 @@ class RingApiNode:
             LayerAssignment(
                 service_name=name,
                 layers=layers,
+                next_node_service_name=next_node_map.get(name),
             )
             for name, layers in layer_assignments.items()
         ]
@@ -393,6 +391,12 @@ class RingApiNode:
             assignment.service_name: assignment.layers for assignment in req.assignments
         }
 
+        # Get prefetch windows from stored topology
+        prefetch_windows = self.topology.get("prefetch_windows", {})
+        if not prefetch_windows:
+            logger.warning("No prefetch windows found in topology, using default of 1")
+            prefetch_windows = {name: 1 for name in layer_assignments.keys()}
+
         # Get shards
         shards = self._get_shards_from_discovery()
 
@@ -416,37 +420,53 @@ class RingApiNode:
                     continue
 
                 shard_props = shards[service_name]
-                shard_address = f"{shard_props.local_ip}:{shard_props.shard_port}"
 
-                try:
-                    # Connect to shard via gRPC
-                    channel = aio_grpc.insecure_channel(shard_address)
-                    stub = ShardApiStub(channel)
-
-                    # Call LoadModel RPC
-                    load_req = shard_api_comm_pb2.LoadModelRequest(
-                        model_path=req.model,
-                        layers=layers,
-                        warmup=True,  # Always warmup for now
+                # Get next node address from assignment
+                next_node_address = ""
+                if (
+                    assignment.next_node_service_name
+                    and assignment.next_node_service_name in shards
+                ):
+                    next_shard = shards[assignment.next_node_service_name]
+                    next_node_address = f"{next_shard.local_ip}:{next_shard.shard_port}"
+                    logger.info(
+                        f"Shard {service_name} next node: {assignment.next_node_service_name} "
+                        f"at {next_node_address}"
+                    )
+                else:
+                    logger.info(
+                        f"Shard {service_name} is final shard (connects to API)"
                     )
 
-                    response = await stub.LoadModel(load_req)  # type: ignore
+                try:
+                    # Get prefetch window for this shard
+                    prefetch_window = prefetch_windows.get(service_name, 1)
 
-                    # TODO: this request should sent "next device address" as well
+                    # Call load_model via HTTP
+                    url = f"http://{shard_props.local_ip}:{shard_props.server_port}/load_model"
+                    payload = {
+                        "model_path": req.model,
+                        "layers": layers,
+                        "warmup": True,
+                        "next_node_address": next_node_address,
+                        "prefetch_window": prefetch_window,
+                    }
+
+                    response = await http_client.post(url, json=payload, timeout=300.0)
+                    result = response.json()
+
                     shard_statuses.append(
                         ShardLoadStatus(
                             service_name=service_name,
-                            success=response.success,
-                            message=response.message,
-                            layers_loaded=list(response.layers_loaded),
+                            success=result.get("success", False),
+                            message=result.get("message", ""),
+                            layers_loaded=result.get("layers_loaded", []),
                         )
                     )
 
-                    await channel.close()
-
                     logger.info(
-                        f"Shard {service_name} load result: success={response.success}, "
-                        f"message={response.message}"
+                        f"Shard {service_name} load result: success={result.get('success')}, "
+                        f"message={result.get('message')}"
                     )
 
                 except Exception as e:
@@ -783,8 +803,8 @@ class RingApiNode:
         device_names: List[str],
         solution: HALDAResult,
         shards: Dict[str, DnetDeviceProperties],
-    ) -> Dict[str, List[int]]:
-        """Compute layer assignments from solver output.
+    ) -> Tuple[Dict[str, List[int]], Dict[str, Optional[str]], Dict[str, int]]:
+        """Compute layer assignments, next node mapping, and prefetch windows from solver output.
 
         Args:
             device_names: Device names in solver order
@@ -792,7 +812,7 @@ class RingApiNode:
             shards: Discovered shards
 
         Returns:
-            Layer assignments per device
+            Tuple of (layer assignments per device, next node service name per device, prefetch window per device)
         """
         if len(solution.w) != len(shards) or len(device_names) != len(shards):
             raise ValueError(
@@ -804,6 +824,7 @@ class RingApiNode:
         logger.info(f"Distributing {num_layers} layers to {len(shards)} devices")
 
         # Assign layers in round-robin fashion
+        # assuming first device has `is_head=True`
         layer_assignments: Dict[str, List[int]] = {name: [] for name in device_names}
         current_layer = 0
         for _ in range(solution.k):
@@ -816,8 +837,48 @@ class RingApiNode:
             f"Assigned {current_layer} layers, expected {num_layers}"
         )
 
+        # Compute next node for each device based on ring order
+        # In a ring topology with k>1, each device forwards to the next device in round-robin order
+        # Special case: with a single device and k>1, it forwards to itself
+        next_node_map: Dict[str, Optional[str]] = {}
+
+        if len(device_names) == 1 and solution.k > 1:
+            # Single device with k>1: forward to itself for multiple rounds
+            next_node_map[device_names[0]] = device_names[0]
+            logger.info(
+                f"Ring: {device_names[0]} (layers {layer_assignments[device_names[0]]}) -> "
+                f"SELF (k={solution.k} rounds)"
+            )
+        else:
+            # Multiple devices or k=1: standard ring topology
+            for i, service_name in enumerate(device_names):
+                if i < len(device_names) - 1:
+                    # Forward to next device in ring
+                    next_node_map[service_name] = device_names[i + 1]
+                else:
+                    # Last device sends to API
+                    next_node_map[service_name] = None
+
+                logger.info(
+                    f"Ring: {service_name} (layers {layer_assignments[service_name]}) -> "
+                    f"{next_node_map[service_name] or 'API (final)'}"
+                )
+
+        # Compute prefetch window for each device: num_layers / k
+        prefetch_windows: Dict[str, int] = {}
+        for service_name, layers in layer_assignments.items():
+            if layers:
+                prefetch_window = max(1, len(layers) // solution.k)
+                prefetch_windows[service_name] = prefetch_window
+                logger.info(
+                    f"Prefetch window for {service_name}: {prefetch_window} "
+                    f"(layers={len(layers)}, k={solution.k})"
+                )
+            else:
+                prefetch_windows[service_name] = 1
+
         logger.info(f"Layer assignments: {layer_assignments}")
-        return layer_assignments
+        return layer_assignments, next_node_map, prefetch_windows
 
     async def _handle_chat_completion(self, req: ChatRequestModel) -> ChatResponseModel:
         """Handle chat completion request.

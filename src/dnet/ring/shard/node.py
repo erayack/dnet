@@ -62,7 +62,6 @@ class RingShardNode:
         listen_port: int,
         http_port: int,
         queue_size: int = 10,
-        prefetch_window_size: int = 2,
     ) -> None:
         """Initialize ring shard node.
 
@@ -71,13 +70,14 @@ class RingShardNode:
             listen_port: gRPC listen port
             http_port: HTTP server port
             queue_size: Size of activation processing queue
-            prefetch_window_size: Number of layers to prefetch ahead
         """
         self.node_id = node_id
         self.listen_port = listen_port
         self.http_port = http_port
         self.queue_size = queue_size
-        self.prefetch_window_size = max(1, int(prefetch_window_size or 1))
+        self.prefetch_window_size: Optional[int] = (
+            None  # Set dynamically during load_model
+        )
 
         # Model state (loaded dynamically)
         self.model_metadata: Optional[ModelMetadata] = None
@@ -127,13 +127,15 @@ class RingShardNode:
         # Background tasks
         self.background_tasks: List[asyncio.Task] = []
 
-        logger.info(
-            f"Shard node {node_id} initialized with queue_size={queue_size}, "
-            f"prefetch_window_size={prefetch_window_size}"
-        )
+        logger.info(f"Shard node {node_id} initialized with queue_size={queue_size}")
 
     async def load_model(
-        self, model_path: str, layers: List[int], warmup: bool = False
+        self,
+        model_path: str,
+        layers: List[int],
+        warmup: bool = False,
+        next_node_address: str = "",
+        prefetch_window: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Load model with specified layers.
 
@@ -141,6 +143,8 @@ class RingShardNode:
             model_path: Path to model (HF repo ID or local path)
             layers: Layer indices to load
             warmup: Whether to perform warmup after loading
+            next_node_address: Address of next shard in ring (empty if last)
+            prefetch_window: Number of layers to prefetch (computed from k if not provided)
 
         Returns:
             Dict with success, message, layers_loaded, load_time_ms
@@ -182,6 +186,17 @@ class RingShardNode:
             self.input_pool = LayerAwareMemoryPool(total_memory_mb=512)
             self.output_pool = LayerAwareMemoryPool(total_memory_mb=512)
 
+            # Set prefetch window size (must be provided by API)
+            if prefetch_window is None:
+                raise ValueError(
+                    "prefetch_window must be provided during model loading"
+                )
+
+            self.prefetch_window_size = prefetch_window
+            logger.info(
+                f"Node {self.node_id}: Using prefetch window size: {self.prefetch_window_size}"
+            )
+
             # Initialize weight cache
             self.weight_cache = WeightCache(
                 self.assigned_layers,
@@ -201,6 +216,15 @@ class RingShardNode:
             # Reset prefetch tracking
             self._prefetch_scheduled = set()
             self._bound_versions = {}
+
+            # Set next node address and connect
+            self.next_node_address = next_node_address
+            if next_node_address:
+                await self._connect_next_node()
+            else:
+                logger.info(
+                    f"Node {self.node_id}: This is the last shard (no next node)"
+                )
 
             # Warmup if requested
             if warmup:
@@ -474,6 +498,73 @@ class RingShardNode:
             except Exception as e:
                 logger.error(f"Error in /profile endpoint: {e}")
                 return JSONResponse(status_code=500, content={"error": str(e)})
+
+        @self.app.post("/load_model")
+        async def load_model_endpoint(request: Request) -> JSONResponse:
+            """Load model with specified layers."""
+            try:
+                body = await request.json()
+                model_path = body.get("model_path")
+                layers = body.get("layers", [])
+                warmup = body.get("warmup", False)
+                next_node_address = body.get("next_node_address", "")
+                prefetch_window = body.get("prefetch_window")
+
+                if not model_path:
+                    return JSONResponse(
+                        status_code=400, content={"error": "model_path is required"}
+                    )
+
+                if prefetch_window is None:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "prefetch_window is required"},
+                    )
+
+                logger.info(
+                    f"HTTP /load_model: model={model_path}, layers={layers}, "
+                    f"next_node={next_node_address or 'none'}, prefetch_window={prefetch_window}"
+                )
+
+                result = await self.load_model(
+                    model_path=model_path,
+                    layers=layers,
+                    warmup=warmup,
+                    next_node_address=next_node_address,
+                    prefetch_window=prefetch_window,
+                )
+
+                return JSONResponse(content=result)
+
+            except Exception as e:
+                logger.error(f"Error in /load_model endpoint: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "success": False,
+                        "message": f"Error: {str(e)}",
+                        "layers_loaded": [],
+                        "load_time_ms": 0.0,
+                    },
+                )
+
+        @self.app.post("/unload_model")
+        async def unload_model_endpoint(request: Request) -> JSONResponse:
+            """Unload current model."""
+            try:
+                logger.info("HTTP /unload_model")
+                result = await self.unload_model()
+                return JSONResponse(content=result)
+
+            except Exception as e:
+                logger.error(f"Error in /unload_model endpoint: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "success": False,
+                        "message": f"Error: {str(e)}",
+                    },
+                )
 
     async def _measure_latency_to_devices(
         self,
@@ -1035,6 +1126,11 @@ class RingShardNode:
         Args:
             activation_msg: Activation message to send
         """
+        logger.info(
+            f"Node {self.node_id}: _send_activation called for nonce={activation_msg.nonce}, "
+            f"layer_id={activation_msg.layer_id}, pool_id={activation_msg.pool_id}"
+        )
+
         if not self._check_model_loaded() or not self.output_pool:
             logger.error(
                 f"Node {self.node_id}: Cannot send activation - model not loaded"
@@ -1043,22 +1139,42 @@ class RingShardNode:
 
         try:
             # Get data from output buffer
+            logger.info(
+                f"Node {self.node_id}: Getting output buffer {activation_msg.pool_id}"
+            )
             output_buffer = self.output_pool.get_buffer(activation_msg.pool_id)
             if output_buffer is None:
-                logger.error(f"Failed to get output buffer {activation_msg.pool_id}")
+                logger.error(
+                    f"Node {self.node_id}: Failed to get output buffer {activation_msg.pool_id}"
+                )
                 return
 
             # Extract actual data
             t_ser = time.perf_counter()
             data_size = int(np.prod(activation_msg.shape))
+            logger.info(
+                f"Node {self.node_id}: Serializing activation data, size={data_size}"
+            )
             data = tensor_to_bytes(output_buffer.flatten()[:data_size])
             ser_ms = (time.perf_counter() - t_ser) * 1000.0
 
             # Send to next node or complete
             assert self.model_metadata is not None
-            if (activation_msg.layer_id + 1) < self.model_metadata.num_layers:
+            next_layer = activation_msg.layer_id + 1
+            logger.info(
+                f"Node {self.node_id}: Processed layer {activation_msg.layer_id}, "
+                f"next_layer={next_layer}, total_layers={self.model_metadata.num_layers}, "
+                f"has_next_stub={self.next_node_stub is not None}, "
+                f"next_address={self.next_node_address}"
+            )
+
+            if next_layer < self.model_metadata.num_layers:
                 # More layers to process - forward to next shard
                 if self.next_node_stub:
+                    logger.info(
+                        f"Node {self.node_id}: Forwarding to next shard, "
+                        f"next_layer={next_layer}"
+                    )
                     # Update per-hop timestamp
                     request = activation_msg.to_proto(data)
                     request.timestamp = utc_epoch_now()
@@ -1067,23 +1183,26 @@ class RingShardNode:
                     rpc_ms = (time.perf_counter() - t0) * 1000.0
 
                     if response.success:
-                        logger.debug(
-                            f"Successfully sent activation to {response.node_id}, "
+                        logger.info(
+                            f"Node {self.node_id}: Successfully sent activation to {response.node_id}, "
                             f"nonce: {activation_msg.nonce}"
                         )
                     else:
-                        logger.error(f"Failed to send activation: {response.message}")
+                        logger.error(
+                            f"Node {self.node_id}: Failed to send activation: {response.message}"
+                        )
                     logger.info(
                         f"[PROFILE][TX] node={self.node_id} nonce={activation_msg.nonce} "
-                        f"next_layer={activation_msg.layer_id + 1} "
+                        f"next_layer={next_layer} "
                         f"payload_kb={(len(data) / 1024):.1f} serialize_ms={ser_ms:.3f} "
                         f"rpc_ms={rpc_ms:.2f}"
                     )
                 else:
                     logger.error(
-                        f"Cannot forward activation - no next node configured. "
-                        f"Layer {activation_msg.layer_id + 1} needs processing but "
-                        f"this is the final shard."
+                        f"Node {self.node_id}: Cannot forward activation - no next node configured. "
+                        f"Layer {next_layer} needs processing but "
+                        f"this is the final shard. "
+                        f"next_node_address={self.next_node_address}"
                     )
             else:
                 # Final node - send to API
