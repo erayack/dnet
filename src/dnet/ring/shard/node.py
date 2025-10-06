@@ -184,7 +184,9 @@ class RingShardNode:
 
             # Initialize weight cache
             self.weight_cache = WeightCache(
-                self.assigned_layers, self.model_metadata, window_size=self.prefetch_window_size
+                self.assigned_layers,
+                self.model_metadata,
+                window_size=self.prefetch_window_size,
             )
 
             # Load the model
@@ -212,7 +214,7 @@ class RingShardNode:
 
             return {
                 "success": True,
-                "message": f"Model loaded successfully",
+                "message": "Model loaded successfully",
                 "layers_loaded": layers,
                 "load_time_ms": load_time_ms,
             }
@@ -309,9 +311,7 @@ class RingShardNode:
         """
         return self.model is not None and self.model_metadata is not None
 
-    async def start(
-        self, shutdown_trigger: Any = lambda: asyncio.Future()
-    ) -> None:
+    async def start(self, shutdown_trigger: Any = lambda: asyncio.Future()) -> None:
         """Start the inference node.
 
         Args:
@@ -353,6 +353,7 @@ class RingShardNode:
     def _start_discovery(self) -> None:
         """Start mDNS discovery service."""
         hostname = gethostname()
+        # TODO: optionally take shard name
         instance = f"shard-{token_hex(4)}-{hostname}"
         self.discovery.create_instance(
             instance,
@@ -363,7 +364,9 @@ class RingShardNode:
             is_manager=False,  # Shard is never a manager
         )
         self.discovery.start()
-        logger.info(f"Discovery service started for shard node {self.node_id}")
+        logger.info(
+            f"Discovery service started for shard node {self.node_id} with name {self.discovery.fullname()}"
+        )
 
     async def _start_grpc_server(self) -> None:
         """Start gRPC server."""
@@ -377,9 +380,7 @@ class RingShardNode:
         listen_addr = f"[::]:{self.listen_port}"
         self.server.add_insecure_port(listen_addr)
         await self.server.start()
-        logger.info(
-            f"Shard node {self.node_id} gRPC server started on {listen_addr}"
-        )
+        logger.info(f"Shard node {self.node_id} gRPC server started on {listen_addr}")
 
     async def _start_http_server(self, shutdown_trigger: Any) -> None:
         """Start HTTP server.
@@ -622,18 +623,14 @@ class RingShardNode:
             True if connected or no next node, False on failure
         """
         if not self.next_node_address:
-            logger.info(
-                f"Shard node {self.node_id} is the final shard (no next node)"
-            )
+            logger.info(f"Shard node {self.node_id} is the final shard (no next node)")
             return True
 
         if self.next_node_channel:
             return True
 
         try:
-            self.next_node_channel = aio_grpc.insecure_channel(
-                self.next_node_address
-            )
+            self.next_node_channel = aio_grpc.insecure_channel(self.next_node_address)
             from ...protos.dnet_ring_pb2_grpc import DnetRingServiceStub
 
             self.next_node_stub = DnetRingServiceStub(self.next_node_channel)
@@ -650,9 +647,7 @@ class RingShardNode:
     async def reset_cache(self) -> None:
         """Reset LLM KV cache."""
         if not self._check_model_loaded():
-            logger.warning(
-                f"Node {self.node_id}: Cannot reset cache - no model loaded"
-            )
+            logger.warning(f"Node {self.node_id}: Cannot reset cache - no model loaded")
             return
 
         try:
@@ -698,7 +693,7 @@ class RingShardNode:
             logger.info(
                 f"[PROFILE][RX] node={self.node_id} nonce={request.nonce} "
                 f"target_layer={target_layer} transport_ms={transport_ms:.1f} "
-                f"payload_kb={(payload_bytes/1024):.1f}"
+                f"payload_kb={(payload_bytes / 1024):.1f}"
             )
 
             # New sequence detection (reset KV cache once per nonce)
@@ -741,9 +736,7 @@ class RingShardNode:
                 if buffer is not None:
                     # Convert bytes to numpy array and copy to buffer
                     data = request.activation.data
-                    input_data = np.frombuffer(
-                        data, dtype=dtype_map[activation.dtype]
-                    )
+                    input_data = np.frombuffer(data, dtype=dtype_map[activation.dtype])
                     buffer[: len(input_data)] = input_data
                     alloc_copy_ms = (time.perf_counter() - t_alloc) * 1000.0
                     logger.info(
@@ -876,7 +869,12 @@ class RingShardNode:
         Args:
             activation_msg: Activation message to process
         """
-        if not self._check_model_loaded() or not self.weight_cache or not self.input_pool or not self.output_pool:
+        if (
+            not self._check_model_loaded()
+            or not self.weight_cache
+            or not self.input_pool
+            or not self.output_pool
+        ):
             logger.error(
                 f"Node {self.node_id}: Cannot process activation - model not loaded"
             )
@@ -1078,7 +1076,7 @@ class RingShardNode:
                     logger.info(
                         f"[PROFILE][TX] node={self.node_id} nonce={activation_msg.nonce} "
                         f"next_layer={activation_msg.layer_id + 1} "
-                        f"payload_kb={(len(data)/1024):.1f} serialize_ms={ser_ms:.3f} "
+                        f"payload_kb={(len(data) / 1024):.1f} serialize_ms={ser_ms:.3f} "
                         f"rpc_ms={rpc_ms:.2f}"
                     )
                 else:
@@ -1139,7 +1137,7 @@ class RingShardNode:
                             logger.info(
                                 f"[PROFILE][TX-FINAL][gRPC] node={self.node_id} "
                                 f"nonce={activation_msg.nonce} "
-                                f"payload_kb={(len(serialized)/1024):.1f} "
+                                f"payload_kb={(len(serialized) / 1024):.1f} "
                                 f"serialize_ms={final_ser_ms:.3f} rpc_ms={rpc_ms:.2f}"
                             )
                         except Exception as e:
@@ -1169,7 +1167,7 @@ class RingShardNode:
                     logger.info(
                         f"[PROFILE][TX-FINAL][HTTP] node={self.node_id} "
                         f"nonce={activation_msg.nonce} "
-                        f"payload_kb={(len(serialized)/1024):.1f} "
+                        f"payload_kb={(len(serialized) / 1024):.1f} "
                         f"serialize_ms={final_ser_ms:.3f} rpc_ms={rpc_ms:.2f}"
                     )
 
@@ -1211,9 +1209,7 @@ class RingShardNode:
             self.discovery.stop()
             self.discovery.free_instance()
         else:
-            logger.warning(
-                f"Discovery service for node {self.node_id} was not running"
-            )
+            logger.warning(f"Discovery service for node {self.node_id} was not running")
 
         # Stop background tasks
         for bgt in self.background_tasks:

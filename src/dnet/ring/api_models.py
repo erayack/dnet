@@ -186,7 +186,7 @@ RecieveResultRequestModel = Union[RecieveResultRequest, RingInferenceError]
 
 
 # ------------------------
-# NEW: Topology Preparation API
+# Topology Preparation API
 # ------------------------
 
 
@@ -206,12 +206,9 @@ class DeviceInfo(BaseModel):
     """Information about a discovered device."""
 
     service_name: str = Field(..., description="mDNS service name")
-    host: str = Field(..., description="Host address")
-    port: int = Field(..., description="Port number")
-    latency_ms: Optional[float] = Field(None, description="Measured latency in ms")
-    bandwidth_mbps: Optional[float] = Field(
-        None, description="Estimated bandwidth in Mbps"
-    )
+    local_ip: str = Field(..., description="Local IP address")
+    http_port: int = Field(..., description="HTTP server port")
+    grpc_port: int = Field(..., description="gRPC server port")
 
 
 class LayerAssignment(BaseModel):
@@ -219,9 +216,6 @@ class LayerAssignment(BaseModel):
 
     service_name: str = Field(..., description="Target device service name")
     layers: List[int] = Field(..., description="Layer indices assigned to this device")
-    estimated_memory_mb: Optional[float] = Field(
-        None, description="Estimated memory usage in MB"
-    )
 
 
 class PrepareTopologyResponse(BaseModel):
@@ -242,7 +236,7 @@ class PrepareTopologyResponse(BaseModel):
 
 
 # ------------------------
-# NEW: Model Loading API
+# Model Loading API
 # ------------------------
 
 
@@ -266,10 +260,7 @@ class ShardLoadStatus(BaseModel):
     layers_loaded: Optional[List[int]] = Field(
         None, description="Layers successfully loaded"
     )
-    error: Optional[str] = Field(None, description="Error message if failed")
-    load_time_ms: Optional[float] = Field(
-        None, description="Time taken to load in milliseconds"
-    )
+    message: Optional[str] = Field(None, description="Status or error message")
 
 
 class LoadModelResponse(BaseModel):
@@ -282,7 +273,4 @@ class LoadModelResponse(BaseModel):
     )
     total_load_time_ms: Optional[float] = Field(
         None, description="Total time taken for all loads"
-    )
-    diagnostics: Optional[Dict[str, Any]] = Field(
-        None, description="Additional diagnostic information"
     )

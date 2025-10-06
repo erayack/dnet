@@ -8,12 +8,12 @@ from dnet.utils.logger import logger
 from dnet.ring.api import RingApiNode
 
 
-async def serve(http_port: int, grpc_port: int | None = None) -> None:
+async def serve(http_port: int, grpc_port: int) -> None:
     """Serve the API node.
 
     Args:
         http_port: HTTP server port
-        grpc_port: gRPC callback port (optional, defaults to http_port + 1)
+        grpc_port: gRPC callback port
     """
     api_node = RingApiNode(http_port=http_port, grpc_port=grpc_port)
 
@@ -46,15 +46,15 @@ def main() -> None:
         "-p",
         "--http-port",
         type=int,
-        default=8080,
-        help="HTTP server port (default: 8080)",
+        required=True,
+        help="HTTP server port",
     )
     ap.add_argument(
         "-g",
         "--grpc-port",
         type=int,
-        default=None,
-        help="gRPC callback port (default: http-port + 1)",
+        required=True,
+        help="gRPC callback port",
     )
     args = ap.parse_args()
 

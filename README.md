@@ -66,7 +66,7 @@ Supported models:
 Start a shard node with gRPC and HTTP ports:
 
 ```sh
-uv run dnet-shard -p 6060 --http-port 7070
+uv run dnet-shard --http-port 8081 --grpc-port 58081
 ```
 
 **Arguments:**
@@ -87,17 +87,12 @@ The shard will:
 Start the API node:
 
 ```sh
-uv run dnet-api -p 8080
+uv run dnet-api --http-port 8080 --grpc-port 58080
 ```
 
-**Arguments:**
+It has the following endpoints:
 
-- `-p, --http-port`: HTTP server port (default: 8080)
-- `-g, --grpc-port`: gRPC callback port (default: http-port + 1)
-
-The API provides the following endpoints:
-
-#### 1. Prepare Topology
+#### Prepare Topology
 
 Discover devices and compute optimal layer distribution:
 
@@ -105,38 +100,47 @@ Discover devices and compute optimal layer distribution:
 curl -X POST http://localhost:8080/v1/prepare_topology \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
-    "force_rediscover": false
+    "model": "Qwen/Qwen3-4B-MLX-4bit"
   }'
 ```
 
-**Response:**
+Response will be in the form:
 
 ```json
 {
-  "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
-  "num_layers": 24,
-  "devices": [...],
-  "assignments": [
-    {"service_name": "shard-abc-hostname", "layers": [0, 1, 8, 9, 16, 17]},
-    {"service_name": "shard-def-hostname", "layers": [2, 3, 10, 11, 18, 19]}
+  "model": "Qwen/Qwen3-4B-MLX-4bit",
+  "num_layers": 36,
+  "devices": [
+    {
+      "service_name": "shard-123456._dnet_p2p._tcp.local.",
+      "local_ip": "192.168.1.2",
+      "http_port": 8081,
+      "grpc_port": 58081
+    }
   ],
-  "diagnostics": {...}
+  "assignments": [
+    {
+      "service_name": "shard-123456._dnet_p2p._tcp.local.",
+      "layers": [0, 1 /* ... */]
+    }
+  ]
 }
 ```
 
-#### 2. Load Model
+#### Load Model
 
 Load the model on shards with prepared topology:
+
+<!-- add devices to body here as well -->
 
 ```sh
 curl -X POST http://localhost:8080/v1/load_model \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+    "model": "Qwen/Qwen3-4B-MLX-4bit",
     "assignments": [
-      {"service_name": "shard-abc-hostname", "layers": [0, 1, 8, 9, 16, 17]},
-      {"service_name": "shard-def-hostname", "layers": [2, 3, 10, 11, 18, 19]}
+      {"service_name": "shard-123456._dnet_p2p._tcp.local.", "layers": [0, 1, 8, 9, 16, 17]},
+      {"service_name": "shard-987654._dnet_p2p._tcp.local.", "layers": [2, 3, 10, 11, 18, 19]}
     ]
   }'
 ```
@@ -160,7 +164,7 @@ curl -X POST http://localhost:8080/v1/load_model \
 }
 ```
 
-#### 3. Chat Completions
+#### Chat Completions
 
 Generate text using the loaded model:
 
@@ -176,15 +180,18 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-#### Other Endpoints
+#### Devices
 
-- `GET /health` - API health status
-- `GET /devices` - List discovered devices
-- `GET /ping` - Simple ping endpoint
+You can get the list of discoverable devices with:
+
+```sh
+curl http://localhost:8080/v1/devices \
+  -H "Content-Type: application/json"
+```
 
 > [!TIP]
 >
-> On MacOS, you can use `dns-sd` to check out devices over mDNS:
+> You can use `dns-sd` to check out devices over mDNS:
 >
 > ```sh
 > dns-sd -Q _dnet_p2p._tcp.local. PTR

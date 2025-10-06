@@ -5,6 +5,7 @@ import time
 import uuid
 from dataclasses import asdict
 from io import StringIO
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import grpc
@@ -29,9 +30,10 @@ from ...protos.shard_api_comm_pb2_grpc import (
     ShardApiServiceStub as ShardApiStub,
     add_ShardApiServiceServicer_to_server,
 )
-from ...utils.loader import create_generate_step_for_ring_with_grpc, load_api_layer_weights
+
 from ...utils.logger import logger
-from ...utils.model import ModelMetadata, get_model_metadata
+from ...utils.model import ModelMetadata, get_model_metadata, load_api_layer_weights
+from .utils import create_generate_step_for_ring_with_grpc
 from ..api_models import (
     ChatBaseParams,
     ChatChoice,
@@ -80,16 +82,16 @@ class RingApiNode:
     def __init__(
         self,
         http_port: int,
-        grpc_port: Optional[int] = None,
+        grpc_port: int,
     ) -> None:
         """Initialize API node.
 
         Args:
             http_port: HTTP server port
-            grpc_port: gRPC callback port (defaults to http_port + 1)
+            grpc_port: gRPC callback port
         """
         self.http_port = http_port
-        self.grpc_port = grpc_port or (http_port + 1)
+        self.grpc_port = grpc_port
 
         # Model state (loaded dynamically)
         self.model_metadata: Optional[ModelMetadata] = None
@@ -124,9 +126,7 @@ class RingApiNode:
             f"gRPC port {self.grpc_port}"
         )
 
-    async def start(
-        self, shutdown_trigger: Any = lambda: asyncio.Future()
-    ) -> None:
+    async def start(self, shutdown_trigger: Any = lambda: asyncio.Future()) -> None:
         """Start the API node.
 
         Args:
@@ -192,7 +192,9 @@ class RingApiNode:
         )
 
         await aio_hypercorn.serve(
-            self.app, config, shutdown_trigger=shutdown_trigger  # type: ignore
+            self.app,  # type: ignore # FIXME: !!!
+            config,
+            shutdown_trigger=shutdown_trigger,
         )
 
     async def _setup_routes(self) -> None:
@@ -231,7 +233,9 @@ class RingApiNode:
             return JSONResponse(content={"devices": devices_dict})
 
         @self.app.post("/v1/prepare_topology")
-        async def prepare_topology(req: PrepareTopologyRequest) -> PrepareTopologyResponse:  # type: ignore
+        async def prepare_topology(
+            req: PrepareTopologyRequest,
+        ) -> PrepareTopologyResponse:  # type: ignore
             """Prepare topology for a model."""
             try:
                 return await self._handle_prepare_topology(req)
@@ -304,7 +308,9 @@ class RingApiNode:
         # Profile model
         batch_sizes = [1, 2, 4, 8]
         sequence_length = 512
-        model_profile = await self._profile_model(req.model, batch_sizes, sequence_length)
+        model_profile = await self._profile_model(
+            req.model, batch_sizes, sequence_length
+        )
 
         # Get shards from discovery
         shards = self._get_shards_from_discovery()
@@ -354,7 +360,9 @@ class RingApiNode:
             for name, layers in layer_assignments.items()
         ]
 
-        logger.info(f"Topology prepared: {len(device_names)} devices, {model_metadata.num_layers} layers")
+        logger.info(
+            f"Topology prepared: {len(device_names)} devices, {model_metadata.num_layers} layers"
+        )
 
         return PrepareTopologyResponse(
             model=req.model,
@@ -382,8 +390,7 @@ class RingApiNode:
 
         # Create layer assignment map
         layer_assignments = {
-            assignment.service_name: assignment.layers
-            for assignment in req.assignments
+            assignment.service_name: assignment.layers for assignment in req.assignments
         }
 
         # Get shards
@@ -402,7 +409,7 @@ class RingApiNode:
                         ShardLoadStatus(
                             service_name=service_name,
                             success=False,
-                            message=f"Shard not found in discovery",
+                            message="Shard not found in discovery",
                             layers_loaded=[],
                         )
                     )
@@ -425,13 +432,13 @@ class RingApiNode:
 
                     response = await stub.LoadModel(load_req)  # type: ignore
 
+                    # TODO: this request should sent "next device address" as well
                     shard_statuses.append(
                         ShardLoadStatus(
                             service_name=service_name,
                             success=response.success,
                             message=response.message,
                             layers_loaded=list(response.layers_loaded),
-                            load_time_ms=response.load_time_ms,
                         )
                     )
 
@@ -443,7 +450,9 @@ class RingApiNode:
                     )
 
                 except Exception as e:
-                    logger.exception(f"Error loading model on shard {service_name}: {e}")
+                    logger.exception(
+                        f"Error loading model on shard {service_name}: {e}"
+                    )
                     shard_statuses.append(
                         ShardLoadStatus(
                             service_name=service_name,
@@ -458,9 +467,7 @@ class RingApiNode:
 
         if not all_success:
             failed_shards = [
-                status.service_name
-                for status in shard_statuses
-                if not status.success
+                status.service_name for status in shard_statuses if not status.success
             ]
             logger.error(f"Failed to load model on shards: {failed_shards}")
 
@@ -471,7 +478,7 @@ class RingApiNode:
                 self.model_name = req.model
 
                 # Load tokenizer
-                self.tokenizer = load_tokenizer(req.model, {})
+                self.tokenizer = load_tokenizer(Path(req.model), {})
 
                 # Load API-side model (embeddings, lm_head, etc.)
                 self.model = get_ring_model(
@@ -587,10 +594,7 @@ class RingApiNode:
         embedding_size = model_metadata.model_config.get("embedding_size")
         if embedding_size is None:
             # Try to infer from embed_tokens tensor dimensions
-            if (
-                model_metadata.embed_tokens
-                and "weight" in model_metadata.embed_tokens
-            ):
+            if model_metadata.embed_tokens and "weight" in model_metadata.embed_tokens:
                 embedding_size = model_metadata.embed_tokens["weight"].shape[1]
             else:
                 # Fallback to hidden_size
@@ -629,7 +633,7 @@ class RingApiNode:
         shards: Dict[str, DnetDeviceProperties],
         repo_id: str,
         embedding_size: int,
-        max_batch_exp: int = 2,
+        max_batch_exp: int = 1,  # very small default for speed
     ) -> Dict[str, Any]:
         """Collect profile data from all shards.
 
@@ -770,9 +774,7 @@ class RingApiNode:
             plot=False,
         )
 
-        logger.info(
-            f"Solver completed: k={solution.k}, objective={solution.obj_value}"
-        )
+        logger.info(f"Solver completed: k={solution.k}, objective={solution.obj_value}")
 
         return (device_names, solution)
 
@@ -817,9 +819,7 @@ class RingApiNode:
         logger.info(f"Layer assignments: {layer_assignments}")
         return layer_assignments
 
-    async def _handle_chat_completion(
-        self, req: ChatRequestModel
-    ) -> ChatResponseModel:
+    async def _handle_chat_completion(self, req: ChatRequestModel) -> ChatResponseModel:
         """Handle chat completion request.
 
         Args:
@@ -864,7 +864,9 @@ class RingApiNode:
                     add_generation_prompt=True,
                     tokenize=False,
                 )
-                logger.info(f"Using tokenizer chat template, prompt preview: {prompt[:100]}...")
+                logger.info(
+                    f"Using tokenizer chat template, prompt preview: {prompt[:100]}..."
+                )
                 return prompt
             except Exception as e:
                 logger.warning(
@@ -934,14 +936,17 @@ class RingApiNode:
                 top_indices = sorted_indices[: (req.logprobs or 0)]
                 top_logprobs_array = logprobs[top_indices]
                 top_token_info = zip(
-                    top_indices.tolist(), top_logprobs_array.tolist()  # type: ignore
+                    top_indices.tolist(),  # type: ignore # FIXME: !!!
+                    top_logprobs_array.tolist(),  # type: ignore # FIXME: !!!
                 )
                 top_tokens.append(dict(top_token_info))
 
             token_logprobs.append(logprobs[token].item())
 
             stop_condition = await self._stopping_criteria(
-                tokens, stop_id_sequences, self.tokenizer.eos_token_id  # type: ignore
+                tokens,
+                stop_id_sequences,
+                self.tokenizer.eos_token_id,  # type: ignore
             )
             if stop_condition.stop_met:
                 completion_reason = ChatCompletionReason.STOP
@@ -1063,7 +1068,8 @@ class RingApiNode:
             usage={
                 "prompt_tokens": prompt_token_count,
                 "completion_tokens": completion_token_count,
-                "total_tokens": (prompt_token_count or 0) + (completion_token_count or 0),
+                "total_tokens": (prompt_token_count or 0)
+                + (completion_token_count or 0),
             },
             metrics=metrics,
         )

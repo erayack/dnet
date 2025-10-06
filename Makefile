@@ -1,4 +1,8 @@
 
+.PHONY: mdns #         | Show dns-sd services
+mdns:
+		dns-sd -Q _dnet_p2p._tcp.local. PTR
+
 .PHONY: lint #         | Run linter
 lint:
 	  uvx ruff check

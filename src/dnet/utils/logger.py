@@ -14,8 +14,13 @@ def get_logger() -> logging.Logger:
     Returns:
         Configured logger instance
     """
+    logLevelEnv = os.getenv("DNET_LOG", "INFO").strip().upper()
+    logLevel = logging.INFO  # default
+    if logLevelEnv in logging._nameToLevel:
+        logLevel = logging._nameToLevel[logLevelEnv]
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=logLevel,
         format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
     )
 

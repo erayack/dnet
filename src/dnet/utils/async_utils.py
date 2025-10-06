@@ -160,6 +160,6 @@ def make_cache(model: "BaseRingModel") -> Any:
     Returns:
         Prompt cache for the model
     """
-    from mlx_lm import cache
+    from mlx_lm.models import cache
 
     return cache.make_prompt_cache(model)
