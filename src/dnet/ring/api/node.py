@@ -45,7 +45,6 @@ from ..api_models import (
     LoadModelRequest,
     LoadModelResponse,
     PrepareTopologyRequest,
-    PrepareTopologyResponse,
     RoleMapping,
     ShardLoadStatus,
     TopologyInfo,
@@ -240,7 +239,7 @@ class RingApiNode:
         @self.app.post("/v1/prepare_topology")
         async def prepare_topology(
             req: PrepareTopologyRequest,
-        ) -> PrepareTopologyResponse:  # type: ignore
+        ) -> TopologyInfo:
             """Prepare topology for a model."""
             try:
                 return await self._handle_prepare_topology(req)
@@ -252,7 +251,7 @@ class RingApiNode:
                 )
 
         @self.app.post("/v1/load_model")
-        async def load_model(req: LoadModelRequest) -> LoadModelResponse:  # type: ignore
+        async def load_model(req: LoadModelRequest) -> LoadModelResponse:
             """Load model on shards with prepared topology."""
             try:
                 return await self._handle_load_model(req)
@@ -288,7 +287,7 @@ class RingApiNode:
 
     async def _handle_prepare_topology(
         self, req: PrepareTopologyRequest
-    ) -> PrepareTopologyResponse:
+    ) -> TopologyInfo:
         """Handle topology preparation request.
 
         Args:
@@ -340,7 +339,7 @@ class RingApiNode:
         # Build response
         devices_info = [
             DeviceInfo(
-                service_name=name,
+                name=name,
                 local_ip=shards[name].local_ip,
                 http_port=shards[name].server_port,
                 grpc_port=shards[name].shard_port,
@@ -357,11 +356,11 @@ class RingApiNode:
             for name in device_names
         ]
 
-        # Store topology
+        # Store topology (can be GET'ed later)
         self.topology = TopologyInfo(
             model=req.model,
             num_layers=model_metadata.num_layers,
-            devices=device_names,
+            devices=devices_info,
             assignments=assignments_info,
             next_service_map=next_service_map,
             prefetch_windows=prefetch_windows,
@@ -373,17 +372,7 @@ class RingApiNode:
         )
 
         # FIXME: can be TopologyInfo itself
-        return PrepareTopologyResponse(
-            model=req.model,
-            num_layers=model_metadata.num_layers,
-            devices=devices_info,
-            assignments=assignments_info,
-            diagnostics={
-                "solver_k": solution.k,
-                "solver_objective": solution.obj_value,
-                "solver_w": solution.w,
-            },
-        )
+        return self.topology
 
     async def _handle_load_model(self, req: LoadModelRequest) -> LoadModelResponse:
         """Handle load model request.
@@ -696,7 +685,7 @@ class RingApiNode:
             Collected shard profiles
         """
         # Calculate payload sizes
-        base_size = embedding_size * 4  # float32
+        base_size = embedding_size * 4
         payload_sizes = [base_size * batch_size for batch_size in [1, 2, 4, 8]]
 
         this_device = self.discovery.get_own_properties()
@@ -710,6 +699,7 @@ class RingApiNode:
         thunderbolt_conns = discover_thunderbolt_connections(shards)
 
         # Call each shard's /profile endpoint
+        # FIXME: do this in parallel
         shard_profiles: Dict[str, Any] = {}
         async with httpx.AsyncClient() as client:
             for service_name, shard_props in shards.items():

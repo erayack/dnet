@@ -205,7 +205,7 @@ class PrepareTopologyRequest(BaseModel):
 class DeviceInfo(BaseModel):
     """Information about a discovered device."""
 
-    service_name: str = Field(..., description="mDNS service name")
+    name: str = Field(..., description="mDNS service name")
     local_ip: str = Field(..., description="Local IP address")
     http_port: int = Field(..., description="HTTP server port")
     grpc_port: int = Field(..., description="gRPC server port")
@@ -215,24 +215,11 @@ class LayerAssignment(BaseModel):
     """Layer assignment for a single device in ring topology."""
 
     service: str = Field(..., description="Target device service name")
-    layers: List[List[int]] = Field(..., description="Layer indices per round (k sublists)")
-    next_service: Optional[str] = Field(None, description="Next node service name in ring (null if connects to API)")
-
-
-class PrepareTopologyResponse(BaseModel):
-    """Response from topology preparation.
-
-    Contains discovered devices, profiling data, and optimal layer assignments.
-    """
-
-    model: str = Field(..., description="Model name")
-    num_layers: int = Field(..., description="Total number of layers in model")
-    devices: List[DeviceInfo] = Field(..., description="Discovered devices")
-    assignments: List[LayerAssignment] = Field(
-        ..., description="Layer assignments per device"
+    layers: List[List[int]] = Field(
+        ..., description="Layer indices per round (k sublists)"
     )
-    diagnostics: Optional[Dict[str, Any]] = Field(
-        None, description="Additional diagnostic information"
+    next_service: Optional[str] = Field(
+        None, description="Next node service name in ring (null if connects to API)"
     )
 
 
@@ -244,7 +231,7 @@ class PrepareTopologyResponse(BaseModel):
 class LoadModelRequest(BaseModel):
     """Request to load model with prepared topology.
 
-    Uses the assignment data from PrepareTopologyResponse.
+    Uses the assignment data from TopologyInfo.
     """
 
     model: str = Field(..., description="Model name or HuggingFace repo ID")
@@ -287,7 +274,7 @@ class TopologyInfo(BaseModel):
 
     model: str = Field(..., description="Model name or HuggingFace repo ID")
     num_layers: int = Field(..., description="Total number of layers in model")
-    devices: List[str] = Field(..., description="Device service names in solver order")
+    devices: List[DeviceInfo] = Field(..., description="Devices (in solver order)")
     assignments: List[LayerAssignment] = Field(
         ..., description="Layer assignments per device"
     )
