@@ -237,6 +237,9 @@ def get_safetensor_details(path: str) -> Dict[str, TensorInfo]:
 def get_model_metadata(model_path: str) -> ModelMetadata:
     """Load model metadata from a HuggingFace model path.
 
+    This function will automatically download the model from HuggingFace if it's not
+    available locally.
+
     Args:
         model_path: Path or HuggingFace repo ID
 
@@ -245,24 +248,45 @@ def get_model_metadata(model_path: str) -> ModelMetadata:
 
     Raises:
         ValueError: If model path cannot be resolved
-        RuntimeError: If weights are inconsistent
+        RuntimeError: If weights are inconsistent or model format is unsupported
     """
-    path = get_model_path(model_path)
+    from .logger import logger
+
+    # get_model_path will download from HuggingFace if not available locally
+    logger.info(f"Loading model metadata for {model_path}")
+    path_result = get_model_path(model_path)
 
     # Handle case where get_model_path returns a tuple (mlx-lm version compatibility)
-    if isinstance(path, tuple):
-        path = path[0] if path else None
+    if isinstance(path_result, tuple):
+        path = path_result[0] if path_result else None
+    else:
+        path = path_result
+
     if path is None:
         raise ValueError(f"Could not resolve model path for {model_path}")
 
     # Ensure it's a Path object
     path = Path(path) if not isinstance(path, Path) else path
+    logger.info(f"Model path resolved to: {path}")
 
     # read model configurations
-    with open(path / "config.json", "r") as f:
+    config_path = path / "config.json"
+    if not config_path.exists():
+        raise RuntimeError(
+            f"config.json not found in {path}. "
+            "The model may not be downloaded correctly."
+        )
+
+    with open(config_path, "r") as f:
         config = json.load(f)
 
     weight_files = glob.glob(str(path / "*.safetensors"))
+
+    if not weight_files:
+        raise RuntimeError(
+            f"No safetensors files found in {path}. "
+            "Ensure the model is downloaded correctly and in the expected format."
+        )
     weight_info: Dict[int, Dict[str, TensorInfo]] = defaultdict(dict)
     embed_tokens: Dict[str, TensorInfo] = {}
     lm_head: Dict[str, TensorInfo] = {}
@@ -283,7 +307,15 @@ def get_model_metadata(model_path: str) -> ModelMetadata:
             else:
                 raise RuntimeError(f"Unexpected key {key}")
 
+    if not weight_info:
+        raise RuntimeError(
+            f"No layer weights found in model at {path}. "
+            f"Found {len(weight_files)} safetensors files but no keys matching 'model.layers.\\d+.*'. "
+            "The model may use an unsupported architecture or key format."
+        )
+
     num_layers = max(weight_info.keys()) + 1
+    logger.info(f"Found {num_layers} layers in model")
     if not (set(weight_info.keys()) == set(range(num_layers))):
         raise RuntimeError("Inconsistent weights")
 
