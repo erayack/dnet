@@ -275,3 +275,26 @@ class LoadModelResponse(BaseModel):
     total_load_time_ms: Optional[float] = Field(
         None, description="Total time taken for all loads"
     )
+
+
+# ------------------------
+# Topology Info
+# ------------------------
+
+
+class TopologyInfo(BaseModel):
+    """Stored topology information for the current model."""
+
+    model: str = Field(..., description="Model name or HuggingFace repo ID")
+    num_layers: int = Field(..., description="Total number of layers in model")
+    devices: List[str] = Field(..., description="Device service names in solver order")
+    assignments: List[LayerAssignment] = Field(
+        ..., description="Layer assignments per device"
+    )
+    next_service_map: Dict[str, Optional[str]] = Field(
+        ..., description="Next service mapping for ring topology"
+    )
+    prefetch_windows: Dict[str, int] = Field(
+        ..., description="Prefetch window size per device"
+    )
+    solution: Dict[str, Any] = Field(..., description="Solver result details")

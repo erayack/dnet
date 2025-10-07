@@ -48,6 +48,7 @@ from ..api_models import (
     PrepareTopologyResponse,
     RoleMapping,
     ShardLoadStatus,
+    TopologyInfo,
 )
 from ..data_types import StopCondition
 from ..model import get_ring_model
@@ -96,7 +97,7 @@ class RingApiNode:
         self.model_name: Optional[str] = None
 
         # Topology state
-        self.topology: Dict[str, Any] = {}
+        self.topology: Optional[TopologyInfo] = None
         self.layer_assignments: Dict[str, List[int]] = {}
         self.first_shard_address: Optional[str] = None
 
@@ -219,7 +220,12 @@ class RingApiNode:
 
         @self.app.get("/v1/topology")
         async def topology() -> JSONResponse:
-            return JSONResponse(content=self.topology)
+            if self.topology:
+                return JSONResponse(content=self.topology.model_dump())
+            else:
+                return JSONResponse(
+                    content={"error": "No topology configured"}, status_code=404
+                )
 
         @self.app.get("/v1/devices")
         async def get_devices() -> JSONResponse:
@@ -331,17 +337,6 @@ class RingApiNode:
             self._compute_layer_assignments(device_names, solution, shards)
         )
 
-        # Store topology
-        self.topology = {
-            "model": req.model,
-            "num_layers": model_metadata.num_layers,
-            "devices": device_names,
-            "assignments": layer_assignments,
-            "next_service_map": next_service_map,
-            "prefetch_windows": prefetch_windows,
-            "solution": asdict(solution),
-        }
-
         # Build response
         devices_info = [
             DeviceInfo(
@@ -362,10 +357,22 @@ class RingApiNode:
             for name in device_names
         ]
 
+        # Store topology
+        self.topology = TopologyInfo(
+            model=req.model,
+            num_layers=model_metadata.num_layers,
+            devices=device_names,
+            assignments=assignments_info,
+            next_service_map=next_service_map,
+            prefetch_windows=prefetch_windows,
+            solution=asdict(solution),
+        )
+
         logger.info(
             f"Topology prepared: {len(device_names)} devices, {model_metadata.num_layers} layers"
         )
 
+        # FIXME: can be TopologyInfo itself
         return PrepareTopologyResponse(
             model=req.model,
             num_layers=model_metadata.num_layers,
@@ -399,10 +406,14 @@ class RingApiNode:
         }
 
         # Get prefetch windows from stored topology
-        prefetch_windows = self.topology.get("prefetch_windows", {})
-        if not prefetch_windows:
-            logger.warning("No prefetch windows found in topology, using default of 1")
+        if self.topology:
+            prefetch_windows = self.topology.prefetch_windows
+        else:
+            logger.warning("No topology found, using default prefetch window of 1")
             prefetch_windows = {name: 1 for name in layer_assignments.keys()}
+
+        # TODO: this should be populated when discovery first starts
+        api_properties = self.discovery.get_own_properties()
 
         # Get shards
         shards = self._get_shards_from_discovery()
@@ -452,13 +463,14 @@ class RingApiNode:
                     prefetch_window = prefetch_windows.get(service_name, 1)
 
                     # Get total layers from stored topology
-                    total_layers = self.topology.get("num_layers", 0)
+                    total_layers = self.topology.num_layers if self.topology else 0
 
                     # Build API callback address (gRPC)
-                    api_callback_address = f"0.0.0.0:{self.grpc_port}"
+                    api_callback_address = f"{api_properties.local_ip}:{self.grpc_port}"
 
                     # Call load_model via HTTP
                     url = f"http://{shard_props.local_ip}:{shard_props.server_port}/load_model"
+                    # TODO: add shared type for this
                     payload = {
                         "model_path": req.model,
                         "layers": layers,

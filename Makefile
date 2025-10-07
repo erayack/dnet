@@ -12,15 +12,7 @@ format:
 
 .PHONY: protos #       | Generate protobuf files
 protos:
-		uv run ./srcipts/generate_protos.py
-
-#### MODEL LOADERS #####
-.PHONY: prep-qwen3 # | Prepare & Load Qwen3 model on shards
-prep-qwen3:
-		export TOPOLOGY=$(curl -s -X POST http://localhost:8080/v1/prepare_topology -H \"Content-Type: application/json\" -d '{ \"model\": \"Qwen/Qwen3-4B-MLX-4bit\" }'); \
-		curl -X POST http://localhost:8080/v1/load_model -d "$$TOPOLOGY"
-
-
+		uv run ./scripts/generate_protos.py
 
 .PHONY: help #         | List targets
 help:                                                                                                                    
