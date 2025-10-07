@@ -470,7 +470,8 @@ class RingApiNode:
                         "api_callback_address": api_callback_address,
                     }
 
-                    response = await http_client.post(url, json=payload, timeout=300.0)
+                    # timeout is `None` because shards may actually be downloading weights for the first time
+                    response = await http_client.post(url, json=payload, timeout=None)
                     result = response.json()
 
                     shard_statuses.append(
