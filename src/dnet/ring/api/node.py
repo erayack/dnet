@@ -154,6 +154,7 @@ class RingApiNode:
             is_manager=True,  # API is a manager
         )
         self.discovery.start()
+        self.discovery.enable_logs()
         logger.info("Discovery service started for API node")
 
     async def _start_grpc_server(self) -> None:
@@ -401,7 +402,7 @@ class RingApiNode:
             logger.warning("No topology found, using default prefetch window of 1")
             prefetch_windows = {name: 1 for name in layer_assignments.keys()}
 
-        # TODO: this should be populated when discovery first starts
+        # FIXME: this should be populated when discovery first starts
         api_properties = self.discovery.get_own_properties()
 
         # Get shards
@@ -458,6 +459,8 @@ class RingApiNode:
                     api_callback_address = f"{api_properties.local_ip}:{self.grpc_port}"
 
                     # Call load_model via HTTP
+                    # FIXME: use thunderbolt?
+
                     url = f"http://{shard_props.local_ip}:{shard_props.server_port}/load_model"
                     # TODO: add shared type for this
                     payload = {
