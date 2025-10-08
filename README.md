@@ -7,7 +7,7 @@
     dnet
   </h1>
   <p align="center">
-    <i>Distributed LLM inference on Apple Silicon using ring topology.</i>
+    <i>Distributed LLM inference on MLX using ring topology.</i>
   </p>
 </p>
 

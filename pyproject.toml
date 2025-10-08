@@ -15,6 +15,7 @@ keywords = [
   "Large Language Models",
   "Apple Silicon",
   "MLX",
+  "Pipeline Parallelism",
 ]
 requires-python = ">=3.12"
 dependencies = [
