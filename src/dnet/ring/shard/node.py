@@ -23,6 +23,8 @@ import hypercorn.asyncio as aio_hypercorn
 from dnet_p2p import DnetP2P, ThunderboltInstance
 from dperf import DeviceProfileInfo, profile_device
 
+
+from ..model.base import BaseRingModel
 from ...protos import dnet_ring_pb2, shard_api_comm_pb2
 from ...protos.dnet_ring_pb2_grpc import add_DnetRingServiceServicer_to_server
 from ...protos.shard_api_comm_pb2_grpc import (
@@ -38,6 +40,7 @@ from ...utils.latency import (
 )
 from ...utils.logger import logger
 from ...utils.model import ModelMetadata, get_model_metadata
+from ...utils.time import utc_epoch_now
 from ...utils.serialization import dtype_map, mlx_dtype_map, tensor_to_bytes
 from ..api_models import RecieveResultRequest
 from ..data_types import ActivationMessage
@@ -47,18 +50,13 @@ from ..weight_cache import WeightCache
 from .servicer import ShardServicer
 
 
-def utc_epoch_now() -> int:
-    """Return current UTC timestamp in milliseconds."""
-    return int(time.time() * 1000)
-
-
 class RingShardNode:
     """Single shard node in the distributed inference ring with dynamic model loading."""
 
     def __init__(
         self,
         node_id: int,
-        listen_port: int,
+        grpc_port: int,
         http_port: int,
         queue_size: int = 10,
     ) -> None:
@@ -66,12 +64,12 @@ class RingShardNode:
 
         Args:
             node_id: Node identifier
-            listen_port: gRPC listen port
+            grpc_port: gRPC listen port
             http_port: HTTP server port
             queue_size: Size of activation processing queue
         """
         self.node_id = node_id
-        self.listen_port = listen_port
+        self.grpc_port = grpc_port
         self.http_port = http_port
         self.queue_size = queue_size
         self.prefetch_window_size = (
@@ -81,14 +79,16 @@ class RingShardNode:
         # Model state (loaded dynamically)
         self.model_metadata: Optional[ModelMetadata] = None
         self.assigned_layers: List[int] = []
-        self.model: Optional[Any] = None  # Ring model instance
+        self.model: Optional[BaseRingModel] = None  # Ring model instance
         self.cache: Optional[Any] = None  # KV cache
         self.model_path: Optional[str] = None  # Track currently loaded model path
 
         # Topology (configured later)
         self.next_node_address: Optional[str] = None
         self.total_layers: int = 0  # Total layers in model
-        self.api_callback_address: Optional[str] = None  # API callback address for final layer
+        self.api_callback_address: Optional[str] = (
+            None  # API callback address for final layer
+        )
 
         # HTTP server
         self.app = FastAPI()
@@ -232,9 +232,7 @@ class RingShardNode:
                     f"Node {self.node_id}: Next node in ring at {next_node_address}"
                 )
             else:
-                logger.info(
-                    f"Node {self.node_id}: No next node configured"
-                )
+                logger.info(f"Node {self.node_id}: No next node configured")
 
             if api_callback_address:
                 logger.info(
@@ -385,7 +383,7 @@ class RingShardNode:
         self._start_discovery()
 
         logger.info(
-            f"Shard node {self.node_id} started on gRPC port {self.listen_port}, "
+            f"Shard node {self.node_id} started on gRPC port {self.grpc_port}, "
             f"HTTP port {self.http_port}"
         )
 
@@ -399,7 +397,7 @@ class RingShardNode:
             hostname,
             "0.0.0.0",  # Binds to all addresses
             self.http_port,  # HTTP port
-            self.listen_port,  # gRPC port
+            self.grpc_port,  # gRPC port
             is_manager=False,  # Shard is never a manager
         )
         self.discovery.start()
@@ -416,7 +414,7 @@ class RingShardNode:
         add_DnetRingServiceServicer_to_server(servicer, self.server)
         add_ShardApiServiceServicer_to_server(servicer, self.server)
 
-        listen_addr = f"[::]:{self.listen_port}"
+        listen_addr = f"[::]:{self.grpc_port}"
         self.server.add_insecure_port(listen_addr)
         await self.server.start()
         logger.info(f"Shard node {self.node_id} gRPC server started on {listen_addr}")
@@ -460,7 +458,7 @@ class RingShardNode:
                     "model_path": self.model_path,
                     "assigned_layers": self.assigned_layers,
                     "queue_size": self.activation_recv_queue.qsize(),
-                    "grpc_port": self.listen_port,
+                    "grpc_port": self.grpc_port,
                     "http_port": self.http_port,
                 }
             )
@@ -1182,8 +1180,10 @@ class RingShardNode:
             next_layer = activation_msg.layer_id + 1
 
             # Use total_layers if available, otherwise fall back to model_metadata
-            total_layers = self.total_layers if self.total_layers > 0 else (
-                self.model_metadata.num_layers if self.model_metadata else 0
+            total_layers = (
+                self.total_layers
+                if self.total_layers > 0
+                else (self.model_metadata.num_layers if self.model_metadata else 0)
             )
 
             logger.info(

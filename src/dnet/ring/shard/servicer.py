@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 import grpc
 
-from ...protos import shard_api_comm_pb2 as pb2_shard_api
 from ...protos.dnet_ring_pb2 import (
     ActivationRequest,
     ActivationResponse,
@@ -164,4 +163,3 @@ class ShardServicer(DnetRingServiceServicer, ShardApiServiceServicer):
                 node_id=str(self.node.node_id),
                 timestamp=int(time.time() * 1000),
             )
-

@@ -154,7 +154,6 @@ class RingApiNode:
             is_manager=True,  # API is a manager
         )
         self.discovery.start()
-        self.discovery.enable_logs()
         logger.info("Discovery service started for API node")
 
     async def _start_grpc_server(self) -> None:

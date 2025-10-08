@@ -39,9 +39,9 @@ class WeightCache:
             if (window_size is not None and window_size > 0)
             else len(self.assigned_layers)
         )
-        self.cache: Dict[int, tuple[Dict[str, mx.array], float]] = (
-            {}
-        )  # layer_id -> (data, access_time)
+        self.cache: Dict[
+            int, tuple[Dict[str, mx.array], float]
+        ] = {}  # layer_id -> (data, access_time)
         self.reference_counts: Dict[int, int] = {}  # layer_id -> count
         self.layer_manager = LayerManager(model_metadata, assigned_layers)
         self.lock = threading.Lock()

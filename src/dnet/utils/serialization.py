@@ -1,6 +1,5 @@
 """Tensor serialization utilities for dnet."""
 
-import time
 from typing import Dict
 
 import mlx.core as mx
@@ -90,16 +89,3 @@ def bytes_to_tensor(byte_data: bytes, dtype_str: str) -> mx.array:
     mx_dtype = getattr(mx, mx_dtype_str, mx.float32)
 
     return mx.array(np_array, dtype=mx_dtype)
-
-
-def utc_epoch_now() -> int:
-    """Get current UTC epoch time in milliseconds.
-
-    High-resolution UTC epoch in milliseconds as int.
-    Previous implementation used whole seconds, which quantized
-    transport timing to ~1000 ms buckets and obscured latency.
-
-    Returns:
-        Current time in milliseconds since epoch
-    """
-    return int(time.time() * 1000)

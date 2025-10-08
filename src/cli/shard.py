@@ -24,7 +24,7 @@ async def serve(
     node_id = random.randint(0, 1000)
     shard_node = RingShardNode(
         node_id=node_id,
-        listen_port=grpc_port,
+        grpc_port=grpc_port,
         http_port=http_port,
         queue_size=queue_size,
     )

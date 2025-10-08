@@ -322,7 +322,9 @@ def get_model_metadata(model_path: str) -> ModelMetadata:
     return ModelMetadata(path, weight_info, embed_tokens, lm_head, norm, config)
 
 
-def get_layer_assignment_rr(num_nodes: int, metadata: ModelMetadata) -> Dict[int, List[int]]:
+def get_layer_assignment_rr(
+    num_nodes: int, metadata: ModelMetadata
+) -> Dict[int, List[int]]:
     """Get round-robin layer assignment across nodes.
 
     Args:

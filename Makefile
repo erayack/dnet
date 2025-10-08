@@ -6,9 +6,9 @@ mdns:
 lint:
 	  uvx ruff check
 
-.PHONY: format #       | Format code
+.PHONY: format #       | Check formatting
 format:
-		uvx ruff format
+		uvx ruff format --diff
 
 .PHONY: protos #       | Generate protobuf files
 protos:

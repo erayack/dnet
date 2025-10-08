@@ -35,10 +35,10 @@ class CompressionStats:
             f"  compressed_size={self.compressed_size:,} bytes,\n"
             f"  sparsity_ratio={self.sparsity_ratio:.2%},\n"
             f"  compression_ratio={self.compression_ratio:.2f}x,\n"
-            f"  columns_kept={self.num_columns_kept}/{self.total_columns} ({self.num_columns_kept/self.total_columns:.1%}),\n"
+            f"  columns_kept={self.num_columns_kept}/{self.total_columns} ({self.num_columns_kept / self.total_columns:.1%}),\n"
             f"  reconstruction_error={self.reconstruction_error:.6f},\n"
-            f"  compression_time={self.compression_time*1000:.2f}ms,\n"
-            f"  decompression_time={self.decompression_time*1000:.2f}ms\n"
+            f"  compression_time={self.compression_time * 1000:.2f}ms,\n"
+            f"  decompression_time={self.decompression_time * 1000:.2f}ms\n"
             f")"
         )
 
@@ -513,7 +513,7 @@ if __name__ == "__main__":
 
         print(
             f"{comp_pct:<8} {'Simple':<15} {stats_s.compression_ratio:<8.2f} "
-            f"{stats_s.compression_time*1000:<12.2f} {decomp_t_s*1000:<12.2f} {error_s:<10.6f}"
+            f"{stats_s.compression_time * 1000:<12.2f} {decomp_t_s * 1000:<12.2f} {error_s:<10.6f}"
         )
 
         if comp_pct >= 50:  # Column mask only makes sense with decent sparsity
@@ -526,7 +526,7 @@ if __name__ == "__main__":
 
             print(
                 f"{'':<8} {'Column Mask':<15} {stats_m.compression_ratio:<8.2f} "
-                f"{stats_m.compression_time*1000:<12.2f} {decomp_t_m*1000:<12.2f} {error_m:<10.6f}"
+                f"{stats_m.compression_time * 1000:<12.2f} {decomp_t_m * 1000:<12.2f} {error_m:<10.6f}"
             )
 
     # Test 3: Large tensor test
@@ -541,7 +541,7 @@ if __name__ == "__main__":
     total_time = time.time() - start_total
 
     print(
-        f"Simple method: {total_time*1000:.1f}ms total, {stats_large.compression_ratio:.2f}x compression"
+        f"Simple method: {total_time * 1000:.1f}ms total, {stats_large.compression_ratio:.2f}x compression"
     )
 
     # Test 4: Protobuf integration
