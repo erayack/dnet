@@ -199,9 +199,6 @@ class PrepareTopologyRequest(BaseModel):
     """
 
     model: str = Field(..., description="Model name or HuggingFace repo ID")
-    force_rediscover: Optional[bool] = Field(
-        default=False, description="Force device rediscovery even if cached"
-    )
     max_batch_exp: int = Field(
         default=2, description="Max batch size as power of 2 exponent"
     )
@@ -248,6 +245,6 @@ class APILoadModelResponse(BaseModel):
     shard_statuses: List[ShardLoadStatus] = Field(
         ..., description="Status of each shard"
     )
-    total_load_time_ms: Optional[float] = Field(
-        None, description="Total time taken for all loads"
+    message: Optional[str] = Field(
+        default=None, description="Overall status or error message"
     )

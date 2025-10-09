@@ -60,6 +60,7 @@ from .models import (
 from ..shard.models import (
     ShardProfileRequest,
     ShardLoadModelRequest,
+    ShardLoadModelResponse,
     ShardProfileResponse,
 )
 from ..data_types import StopCondition
@@ -111,8 +112,6 @@ class RingApiNode:
 
         # Topology state
         self.topology: Optional[TopologyInfo] = None
-        self.layer_assignments: Dict[str, List[int]] = {}
-        self.first_shard_address: Optional[str] = None
 
         # API
         self.app = FastAPI()
@@ -312,16 +311,8 @@ class RingApiNode:
         """
         logger.info(f"Preparing topology for model: {req.model}")
 
-        # Optionally force rediscovery
-        if req.force_rediscover:
-            # Give discovery time to refresh
-            await asyncio.sleep(2.0)
-
         # Load model metadata
         model_metadata = get_model_metadata(req.model)
-
-        # Calculate embedding size
-        embedding_size = await self._get_embedding_size(model_metadata, req.model)
 
         # Profile model
         batch_sizes = [1, 2, 4, 8]
@@ -339,7 +330,11 @@ class RingApiNode:
 
         # Collect shard profiles and thunderbolt connections
         shard_profiles, thunderbolt_conns = await self._collect_shard_profiles(
-            shards, req.model, embedding_size, req.max_batch_exp, batch_sizes
+            shards,
+            req.model,
+            model_metadata.embedding_size,
+            req.max_batch_exp,
+            batch_sizes,
         )
 
         # Optimize device ordering to place Thunderbolt-connected devices adjacently
@@ -353,7 +348,7 @@ class RingApiNode:
         )
         shards_list = [
             shards[name] for name in optimized_device_name_order
-        ]  # shard names to dnet properties
+        ]  # shards ordered w.r.t to the solver
 
         # Compute layer assignments, next service mapping, and prefetch windows
         layer_assignments, next_service_map, prefetch_windows = (
@@ -400,20 +395,9 @@ class RingApiNode:
             Load model response
         """
         logger.info(f"Loading model: {req.model}")
-        start_time = time.perf_counter()
-
-        # Create layer assignment map - flatten layers for internal use
-        layer_assignments = {
-            assignment.service: [
-                layer for round_layers in assignment.layers for layer in round_layers
-            ]
-            for assignment in req.assignments
-        }
-
-        # FIXME: this should be populated when discovery first starts
-        api_properties = self.discovery.get_own_properties()
 
         # Get shards
+        api_properties = self.discovery.get_own_properties()
         shards = self._get_shards_from_discovery()
 
         # Notify each shard to load their layers via HTTP
@@ -470,24 +454,22 @@ class RingApiNode:
                         prefetch_window=assignment.prefetch_window,
                         total_layers=total_layers,
                         api_callback_address=api_callback_address,
-                    )
+                    ).model_dump()
 
                     # timeout is `None` because shards may actually be downloading weights for the first time
                     response = await http_client.post(url, json=payload, timeout=None)
-                    result = response.json()
+                    result = ShardLoadModelResponse.model_validate_json(response.text)
 
                     shard_statuses.append(
                         ShardLoadStatus(
                             service_name=service_name,
-                            success=result.get("success", False),
-                            message=result.get("message", ""),
-                            layers_loaded=result.get("layers_loaded", []),
+                            success=result.success,
+                            message=result.message,
+                            layers_loaded=result.layers_loaded,
                         )
                     )
-
                     logger.info(
-                        f"Shard {service_name} load result: success={result.get('success')}, "
-                        f"message={result.get('message')}"
+                        f"Shard {service_name} load result: success={result.success} ({result.message})"
                     )
 
                 except Exception as e:
@@ -498,22 +480,13 @@ class RingApiNode:
                         ShardLoadStatus(
                             service_name=service_name,
                             success=False,
-                            message=f"Error: {str(e)}",
+                            message=str(e),
                             layers_loaded=[],
                         )
                     )
 
         # Check if all shards loaded successfully
-        all_success = all(status.success for status in shard_statuses)
-
-        if not all_success:
-            failed_shards = [
-                status.service_name for status in shard_statuses if not status.success
-            ]
-            logger.error(f"Failed to load model on shards: {failed_shards}")
-
-        # If successful, load API-side model components
-        if all_success:
+        if all(status.success for status in shard_statuses):
             try:
                 self.model_metadata = get_model_metadata(req.model)
                 self.model_name = req.model
@@ -529,48 +502,34 @@ class RingApiNode:
                 )
                 load_api_layer_weights(self.model_metadata, self.model)
 
-                # Store topology
-                self.layer_assignments = layer_assignments
-
                 # Connect to first shard (head device)
-                # Find the shard with layer 0
-                first_shard_name = None
-                for name, layers in layer_assignments.items():
-                    if 0 in layers:
-                        first_shard_name = name
-                        break
-
-                if first_shard_name and first_shard_name in shards:
-                    shard_props = shards[first_shard_name]
-                    self.first_shard_address = (
-                        f"{shard_props.local_ip}:{shard_props.shard_port}"
-                    )
-                    await self._connect_first_shard()
-                else:
-                    logger.warning("Could not identify first shard (with layer 0)")
+                # this should be the first device in `self.topology.devices`
+                await self._connect_first_shard()
 
                 logger.info(f"API-side model loaded successfully for {req.model}")
-
+                return APILoadModelResponse(
+                    model=req.model,
+                    success=True,
+                    shard_statuses=shard_statuses,
+                )
             except Exception as e:
                 logger.exception(f"Error loading API-side model: {e}")
-                all_success = False
-                shard_statuses.append(
-                    ShardLoadStatus(
-                        service_name="api",
-                        success=False,
-                        message=f"API model load error: {str(e)}",
-                        layers_loaded=[],
-                    )
+                return APILoadModelResponse(
+                    model=req.model,
+                    success=False,
+                    shard_statuses=shard_statuses,
+                    message=f"Error loading API-side model: {e}",
                 )
-
-        total_load_time_ms = (time.perf_counter() - start_time) * 1000.0
-
-        return APILoadModelResponse(
-            model=req.model,
-            success=all_success,
-            shard_statuses=shard_statuses,
-            total_load_time_ms=total_load_time_ms,
-        )
+        else:
+            failed_shards = [
+                status.service_name for status in shard_statuses if not status.success
+            ]
+            logger.error(f"Failed to load model on shards: {failed_shards}")
+            return APILoadModelResponse(
+                model=req.model,
+                success=False,
+                shard_statuses=shard_statuses,
+            )
 
     async def _connect_first_shard(self) -> bool:
         """Connect to first shard in ring.
@@ -578,32 +537,36 @@ class RingApiNode:
         Returns:
             True if connected, False otherwise
         """
-        if not self.first_shard_address:
+        if not self.topology:
             return False
 
+        # since topology stores the sorted devices, we simply get the first one
+        first_shard = self.topology.devices[0]
+        first_shard_address = f"{first_shard.local_ip}:{first_shard.shard_port}"
         if self.first_shard_channel:
             return True
 
         try:
             self.first_shard_channel = aio_grpc.insecure_channel(
-                self.first_shard_address
+                f"{first_shard.local_ip}:{first_shard.shard_port}"
             )
             self.first_shard_stub = DnetRingServiceStub(self.first_shard_channel)
 
             # Prepare generate_step with gRPC callback
-            callback_addr = f"0.0.0.0:{self.grpc_port}"
+            api_properties = self.discovery.get_own_properties()
+            callback_addr = f"{api_properties.local_ip}:{self.grpc_port}"
             self.generate_step = create_generate_step_for_ring_with_grpc(
                 self.first_shard_stub,
                 callback_protocol="grpc",
                 callback_addr=callback_addr,
             )
 
-            logger.info(f"Connected to first shard at {self.first_shard_address}")
+            logger.info(f"Connected to first shard at {first_shard_address}")
             return True
 
         except Exception as e:
             logger.warning(
-                f"Failed to connect to first shard {self.first_shard_address}: {e}"
+                f"Failed to connect to first shard {first_shard_address}: {e}"
             )
             self.first_shard_channel = None
             self.first_shard_stub = None
@@ -618,35 +581,6 @@ class RingApiNode:
         """
         devices = self.discovery.get_properties()
         return {k: v for k, v in devices.items() if not v.is_manager}
-
-    async def _get_embedding_size(
-        self, model_metadata: ModelMetadata, model_name: str
-    ) -> int:
-        """Get embedding size from model metadata.
-
-        Args:
-            model_metadata: Model metadata
-            model_name: Model name (for logging)
-
-        Returns:
-            Embedding size
-        """
-        # Try to get embedding_size first, fallback to hidden_size
-        embedding_size = model_metadata.model_config.get("embedding_size")
-        if embedding_size is None:
-            # Try to infer from embed_tokens tensor dimensions
-            if model_metadata.embed_tokens and "weight" in model_metadata.embed_tokens:
-                embedding_size = model_metadata.embed_tokens["weight"].shape[1]
-            else:
-                # Fallback to hidden_size
-                embedding_size = model_metadata.model_config.get("hidden_size")
-
-        if embedding_size is None:
-            raise ValueError(
-                f"Could not find embedding_size or hidden_size in model config for {model_name}"
-            )
-
-        return embedding_size
 
     async def _profile_model(
         self, repo_id: str, batch_sizes: List[int], sequence_length: int
@@ -737,15 +671,15 @@ class RingApiNode:
                         profile_data = ShardProfileResponse.model_validate(
                             response.json()
                         )
+                        profile = load_device_profile_from_dict(profile_data.profile)
                         logger.info(f"Successfully collected profile from {shard_name}")
 
                         # Mark head device (same local IP as API)
                         if shard_props.local_ip == this_device.local_ip:
-                            profile_data.profile["is_head"] = True
+                            profile.is_head = True
 
-                        shard_profiles[shard_name] = load_device_profile_from_dict(
-                            profile_data.profile
-                        )
+                        # FIXME: DeviceProfileInfo to DeviceProfile should be better
+                        shard_profiles[shard_name] = profile
                     else:
                         logger.error(
                             f"Failed to get profile from {shard_name}: "

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from dnet_p2p.thunderbolt import ThunderboltConnection
 from dnet_p2p import DnetDeviceProperties
 
+from dnet.utils.latency import LatencyResults
 
 # ------------------------
 # Load Model API
@@ -82,7 +83,7 @@ class ShardProfileResponse(BaseModel):
     """Response from device profiling and latency measurement."""
 
     profile: Dict[str, Any] = Field(..., description="Device profile information")
-    latency: Dict[str, Any] = Field(..., description="Latency measurement results")
+    latency: LatencyResults = Field(..., description="Latency measurement results")
 
 
 # ------------------------

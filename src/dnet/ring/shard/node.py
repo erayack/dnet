@@ -4,12 +4,12 @@ import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
 from queue import Empty, Queue
 from secrets import token_hex
 from socket import gethostname
 from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 from urllib.parse import urlparse
+from dataclasses import asdict
 
 import httpx
 import mlx.core as mx
@@ -21,10 +21,10 @@ import hypercorn.asyncio as aio_hypercorn
 
 from dnet_p2p import (
     DnetP2P,
-    ThunderboltInstance,
     DnetDeviceProperties,
     discover_thunderbolt_connection,
 )
+from dnet_p2p.thunderbolt import ThunderboltConnection
 from dperf import DeviceProfileInfo, profile_device
 
 
@@ -457,31 +457,26 @@ class RingShardNode:
                 )
 
                 # Profile device using dperf
-                try:
-                    device_profile = await self._profile_device(
-                        req.repo_id, req.max_batch_exp
+                device_profile = await self._profile_device(
+                    req.repo_id, req.max_batch_exp
+                )
+
+                # Overwrite `t_comm` with median latency
+                median_latency = calculate_median_latency_seconds(latency_results)
+                if median_latency is not None:
+                    device_profile.t_comm = median_latency
+                    logger.info(
+                        f"Set t_comm to median latency: {device_profile.t_comm:.6f}s"
+                    )
+                else:
+                    logger.warning(
+                        "No valid latency measurements, keeping default t_comm"
                     )
 
-                    # Overwrite t_comm with median latency
-                    median_latency = calculate_median_latency_seconds(latency_results)
-                    if median_latency is not None:
-                        device_profile.t_comm = median_latency
-                        logger.info(
-                            f"Set t_comm to median latency: {device_profile.t_comm:.6f}s"
-                        )
-                    else:
-                        logger.warning(
-                            "No valid latency measurements, keeping default t_comm"
-                        )
-                    device_profile_dict = asdict(device_profile)
-
-                except Exception as e:
-                    logger.error(f"Failed to profile device: {e}")
-                    device_profile_dict = {"error": f"Device profiling failed: {e}"}
-
                 return ShardProfileResponse(
-                    profile=device_profile_dict,
-                    latency=latency_results.model_dump(),
+                    # FIXME: asdict because this is `dataclass`
+                    profile=asdict(device_profile),
+                    latency=latency_results,
                 )
             except Exception as e:
                 logger.error(f"Error in /profile endpoint: {e}")
@@ -527,8 +522,8 @@ class RingShardNode:
 
     async def _measure_latency_to_devices(
         self,
-        devices: Mapping[str, Any],
-        thunderbolts: Mapping[str, Any],
+        devices: Mapping[str, DnetDeviceProperties],
+        thunderbolts: Mapping[str, ThunderboltConnection],
         payload_sizes: List[int],
     ) -> LatencyResults:
         """Measure latency to all devices except self.
@@ -550,27 +545,26 @@ class RingShardNode:
                 continue
 
             # Skip measuring latency to API (manager) devices
-            if device_info.get("is_manager", False):
+            if device_info.is_manager:
                 logger.debug(
                     f"Skipping latency measurement to manager/API: {service_name}"
                 )
                 continue
 
             try:
-                shard_port = device_info.get("shard_port")
+                shard_port = device_info.shard_port
 
                 # Check for Thunderbolt connection
                 if service_name in thunderbolts:
                     tb_data = thunderbolts[service_name]
-                    service_ip = tb_data["ip"]
-                    tb_instance = ThunderboltInstance(**tb_data["instance"])
+                    service_ip = tb_data.ip_addr
                     logger.info(
                         f"Using Thunderbolt for {service_name} at {service_ip}, "
-                        f"connected to instance {tb_instance.device}"
+                        f"connected to instance {tb_data.instance}"
                     )
                 else:
                     # No Thunderbolt, use WiFi
-                    service_ip = device_info.get("local_ip")
+                    service_ip = device_info.local_ip
 
                 if not shard_port or not service_ip:
                     logger.warning(

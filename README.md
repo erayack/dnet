@@ -83,7 +83,7 @@ After that, we can call the [completions](#chat-completions) endpoint as usual.
 > We have a script that can prepare the model and load it at once:
 >
 > ```sh
-> uv run ./scripts/prepare_model.py -m Qwen/Qwen3-4B-MLX-4bit
+> uv run ./scripts/prepare_model.py Qwen/Qwen3-4B-MLX-4bit
 > ```
 
 #### Prepare Topology

@@ -112,6 +112,34 @@ class ModelMetadata:
         """Model configuration dict."""
         return self.config
 
+    @cached_property
+    def embedding_size(self) -> int:
+        """Get embedding size from model metadata.
+
+        Args:
+            model_metadata: Model metadata
+
+        Returns:
+            Embedding size
+        """
+
+        # try to get embedding_size first, fallback to hidden_size
+        embedding_size = self.model_config.get("embedding_size")
+        if embedding_size is None:
+            # try to infer from embed_tokens tensor dimensions
+            if self.embed_tokens and "weight" in self.embed_tokens:
+                embedding_size = self.embed_tokens["weight"].shape[1]
+            else:
+                # fallback to hidden_size
+                embedding_size = self.model_config.get("hidden_size")
+
+        if embedding_size is None:
+            raise ValueError(
+                "Could not find embedding_size or hidden_size in model metadata"
+            )
+
+        return embedding_size
+
 
 class MappedFile:
     """Maps a file to memory for efficient weight loading."""
