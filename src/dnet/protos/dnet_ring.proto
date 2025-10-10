@@ -15,24 +15,25 @@ service DnetRingService {
 
     // Measure latency between nodes
     rpc MeasureLatency (LatencyMeasureRequest) returns (LatencyMeasureResponse) {}
+
+    // Streaming activations per request (optional, bidi)
+    rpc StreamActivations(stream ActivationFrame) returns (stream StreamAck);
 }
 
-// Activation
 message Activation {
-  bytes data = 1;            // Tensor data
-  int32 batch_size = 2;      // Number of activations (multiple request batching)
-  repeated int32 shape = 3;  // Shape of each tensor
-  string dtype = 4;          // Data type of each tensor
-  int32 layer_id = 5;        // Layer that produced these activations (-1 for input)
+  bytes data = 1;
+  int32 batch_size = 2;
+  repeated int32 shape = 3;
+  string dtype = 4;
+  int32 layer_id = 5;
 }
 
-// Request message for sending activations
 message ActivationRequest {
-    string nonce = 1;             // Unique request identifier
-    Activation activation = 2;    // Activation data
-    int64 timestamp = 3;          // Timestamp for debugging/metrics
-    string node_origin = 4;       // Originating node ID for tracing
-    string callback_url = 5;      // Callback URL for API node
+    string nonce = 1;
+    Activation activation = 2;
+    int64 timestamp = 3;
+    string node_origin = 4;
+    string callback_url = 5;
 }
 
 // Response message for activation sending
@@ -40,6 +41,20 @@ message ActivationResponse {
     bool success = 1;             // Whether the activation was processed successfully
     string message = 2;           // Optional error message or status info
     string node_id = 3;           // Responding node identifier
+}
+
+// Streaming frame carrying full request for parity with unary path
+message ActivationFrame {
+  ActivationRequest request = 1;  // same fields as unary request
+  uint64 seq = 2;                 // per (nonce, link) monotonic sequence
+  bool end_of_request = 3;        // optional: close hint
+}
+
+message StreamAck {
+  string nonce = 1;
+  uint64 seq = 2;
+  bool accepted = 3;              // ack after enqueue to recv queue
+  string message = 4;             // optional error/backpressure info
 }
 
 // Health check request
