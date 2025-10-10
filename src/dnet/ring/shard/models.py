@@ -7,10 +7,6 @@ from dnet_p2p import DnetDeviceProperties
 
 from dnet.utils.latency import LatencyResults
 
-# ------------------------
-# Load Model API
-# ------------------------
-
 
 class ShardLoadModelRequest(BaseModel):
     """Request to load model with specified layers on shard."""
@@ -44,21 +40,11 @@ class ShardLoadModelResponse(BaseModel):
     )
 
 
-# ------------------------
-# Unload Model API
-# ------------------------
-
-
 class ShardUnloadModelResponse(BaseModel):
     """Response from model unloading operation on shard."""
 
     success: bool = Field(..., description="Whether unloading succeeded")
     message: str = Field(..., description="Status or error message")
-
-
-# ------------------------
-# Profile API
-# ------------------------
 
 
 class ShardProfileRequest(BaseModel):
@@ -84,11 +70,6 @@ class ShardProfileResponse(BaseModel):
 
     profile: Dict[str, Any] = Field(..., description="Device profile information")
     latency: LatencyResults = Field(..., description="Latency measurement results")
-
-
-# ------------------------
-# Health API
-# ------------------------
 
 
 class HealthResponse(BaseModel):
