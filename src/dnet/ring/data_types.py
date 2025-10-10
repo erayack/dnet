@@ -1,16 +1,16 @@
-"""Data types for dnet ring topology."""
-
+import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import NamedTuple, Tuple
+from typing import NamedTuple, Tuple, Optional
+
+import mlx.core as mx
 
 from ..protos.dnet_ring_pb2 import Activation, ActivationRequest
 
 
+# Internal dataclass for easier handling
 @dataclass(slots=True)
 class ActivationMessage:
-    """Internal representation of activation data flowing through the ring."""
-
     nonce: str
     pool_id: int
     batch_size: int
@@ -20,20 +20,20 @@ class ActivationMessage:
     timestamp: int
     node_origin: str
     callback_url: str
+    # Optional direct tensor reference to avoid staging/copies
+    tensor: Optional[mx.array] = None
+    # Local profiling timestamps (perf_counter seconds)
+    recv_perf_t: float = 0.0
+    enq_perf_t: float = 0.0
+    # TX queue enqueue time (perf_counter seconds)
+    tx_enq_perf_t: float = 0.0
+    # Final token path (end-shard sampling)
+    is_final: bool = False
+    token_id: int = -1
 
     @classmethod
-    def from_proto(
-        cls, proto_msg: ActivationRequest, pool_id: int = 0
-    ) -> "ActivationMessage":
-        """Create ActivationMessage from protobuf message.
-
-        Args:
-            proto_msg: Protobuf ActivationRequest
-            pool_id: Memory pool ID for this activation
-
-        Returns:
-            ActivationMessage instance
-        """
+    def from_proto(cls, proto_msg: ActivationRequest, pool_id: int = 0):
+        """Create from protobuf message"""
         return cls(
             nonce=proto_msg.nonce,
             pool_id=pool_id,
@@ -47,14 +47,7 @@ class ActivationMessage:
         )
 
     def to_proto(self, data: bytes) -> ActivationRequest:
-        """Convert to protobuf ActivationRequest.
-
-        Args:
-            data: Serialized tensor data
-
-        Returns:
-            Protobuf ActivationRequest
-        """
+        """Convert to protobuf request"""
         return ActivationRequest(
             nonce=self.nonce,
             activation=Activation(
@@ -72,23 +65,17 @@ class ActivationMessage:
 
 @dataclass(slots=True)
 class WeightRequest:
-    """Request for weight prefetching."""
-
     weight_id: str
     layer_id: int
     priority: int = 0
 
 
 class PoolStatus(str, Enum):
-    """Status of a memory pool buffer."""
-
     FREE = "free"
     ALLOCATED = "allocated"
     IN_USE = "in_use"
 
 
 class StopCondition(NamedTuple):
-    """Condition for stopping token generation."""
-
     stop_met: bool
     trim_length: int
