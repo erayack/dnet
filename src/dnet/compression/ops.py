@@ -4,7 +4,6 @@ import math
 from typing import Optional, Dict
 
 import mlx.core as mx
-import numpy as np
 
 from .kernels import (
     k_col_norm2_unroll,
