@@ -20,8 +20,8 @@ class ShardLoadModelRequest(BaseModel):
     next_node: Optional[DnetDeviceProperties] = Field(
         default=None, description="Next shard in the ring"
     )
-    prefetch_window: int = Field(
-        ..., description="Number of layers to prefetch (computed from k)"
+    window_size: int = Field(
+        ..., description="Window size (computed from k)"
     )
     api_callback_address: str = Field(
         ...,

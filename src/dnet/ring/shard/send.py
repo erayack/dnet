@@ -176,12 +176,16 @@ class SendMixin:
             response = await self.next_node_stub.SendActivation(request)  # type: ignore
             rpc_ms = (time.perf_counter() - t0) * 1000.0
             if not response.success:
-                logger.warning(f"Next node reported error: {response.message}")
+                logger.warning("Next node reported error: %s", response.message)
             logger.info(
-                f"[PROFILE][TX] node={self.node_id} nonce={request.nonce} forwarded_layer={request.activation.layer_id + 1} rpc_ms={rpc_ms:.2f}"
+                "[PROFILE][TX] node=%s nonce=%s forwarded_layer=%s rpc_ms=%.2f",
+                self.node_id,
+                request.nonce,
+                request.activation.layer_id + 1,
+                rpc_ms,
             )
         except Exception as e:
-            logger.error(f"Failed to forward activation: {e}")
+            logger.error("Failed to forward activation: %s", e)
 
     async def _send_worker(self):
         while self.running or (

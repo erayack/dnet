@@ -23,7 +23,6 @@ from dnet_p2p import (
 )
 
 from ...protos.dnet_ring_pb2_grpc import add_DnetRingServiceServicer_to_server
-from ...protos.shard_api_comm_pb2_grpc import add_ShardApiServiceServicer_to_server
 from .servicer import ShardServicer
 from ...utils.logger import logger
 from ...utils.serialization import tensor_to_bytes
@@ -66,31 +65,14 @@ class StartupMixin:
                 self.background_tasks.append(asyncio.create_task(self._stream_sweeper()))
         except Exception:
             pass
-
+    
         self.compute_thread = threading.Thread(target=self._compute_worker, daemon=True)
         self.compute_thread.start()
-
-        initial_window = self._assigned_sorted[: self.window_size]
-        if not (self._warmup_completed and self._warmup_keep_flag):
-            for lyr in initial_window:
-                self._prefetch_to_ram(lyr)
-                self._enqueue_weight_prefetch(lyr)
-
-        m = len(self._assigned_sorted)
-        if m > 0:
-            if m % self.window_size != 0:
-                logger.warning(
-                    "Window size %s does not divide local layer count %s. Rounds per token will vary; consider setting k*w = %s.",
-                    self.window_size,
-                    m,
-                    m,
-                )
-            else:
-                k = m // self.window_size
-                logger.info("Windowed prefetch: m=%s, w=%s, k=%s rounds per token", m, self.window_size, k)
-
-        self._start_discovery()
-        logger.info("Shard node %s completed initialization on port %s", self.node_id, self.listen_port)
+        logger.info("sdadasdasdad")
+        #self._start_discovery()
+        logger.info("hey")
+        #logger.info("Shard node %s completed initialization on port %s", self.node_id, self.listen_port)
+        logger.info("hey!!")
 
     def _start_discovery(self) -> None:
         """Start mDNS discovery service."""
@@ -112,15 +94,19 @@ class StartupMixin:
         """Start gRPC server."""
         self.server = aio_grpc.server()
 
-        # Add the servicer (handles both ring and shard API services)
+        # Add the ring servicer; shard acts as client for ShardApiService (to API)
         servicer = ShardServicer(self)  # type: ignore # FIXME: !!!
         add_DnetRingServiceServicer_to_server(servicer, self.server)
-        add_ShardApiServiceServicer_to_server(servicer, self.server)
 
         listen_addr = f"[::]:{self.grpc_port}"
         self.server.add_insecure_port(listen_addr)
         await self.server.start()
         logger.info("Shard node %s gRPC server started on %s", self.node_id, listen_addr)
+        try:
+            await asyncio.get_running_loop().run_in_executor(self.executor, self._warmup_serialization)
+            logger.info("Warmup serialization completed")
+        except Exception as e:
+            logger.warning("Warmup serialization failed: %s", e)
 
     def _warmup_serialization(self):
         try:
