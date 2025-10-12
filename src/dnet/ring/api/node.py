@@ -68,7 +68,7 @@ from ..shard.models import (
 )
 from ..data_types import StopCondition
 from ..model import get_ring_model
-from .servicer import ApiServicer
+from .servicer import ShardApiServicer
 from ..common import TopologyInfo, LayerAssignment
 
 
@@ -182,13 +182,13 @@ class RingApiNode:
             return
 
         server = aio_grpc.server()
-        servicer = ApiServicer(self)
+        servicer = ShardApiServicer(self)
         add_ShardApiServiceServicer_to_server(servicer, server)
         listen_addr = f"[::]:{self.grpc_port}"
         server.add_insecure_port(listen_addr)
         await server.start()
         self.api_grpc_server = server
-        logger.info(f"API gRPC callback server started on {listen_addr}")
+        logger.info("API gRPC callback server started on %s", listen_addr)
 
     async def _start_http_server(self, shutdown_trigger: Any) -> None:
         """Start HTTP server.
@@ -336,8 +336,8 @@ class RingApiNode:
         model_metadata = get_model_metadata(req.model)
 
         # Profile model
-        batch_sizes = [1, 2, 4, 8]
-        sequence_length = 512
+        batch_sizes = [1, 2] # TODO: make it configurable
+        sequence_length = 512 # TODO: make it configurable
         model_profile = await self._profile_model(
             req.model, batch_sizes, sequence_length
         )
@@ -456,7 +456,7 @@ class RingApiNode:
                         layers=layers,
                         warmup=True,
                         next_node=next_shard,
-                        prefetch_window=assignment.prefetch_window,
+                        window_size=assignment.window_size,
                         total_layers=total_layers,
                         api_callback_address=api_callback_address,
                     ).model_dump()
@@ -969,34 +969,34 @@ class RingApiNode:
             for service_name in device_names:
                 logger.info(f"Ring: {service_name} -> {next_service_map[service_name]}")
 
-        # Compute prefetch window for each device: total_layers_per_device / k
-        prefetch_windows: Dict[str, int] = {}
+        # Compute window size for each device: total_layers_per_device / k
+        window_sizes: Dict[str, int] = {}
         for service_name, rounds_layers in layer_assignments.items():
             # Flatten to count total layers
             total_layers = sum(len(round_layers) for round_layers in rounds_layers)
             if total_layers > 0:
-                prefetch_window = max(1, total_layers // solution.k)
-                prefetch_windows[service_name] = prefetch_window
+                window_size = max(1, total_layers // solution.k)
+                window_sizes[service_name] = window_size
                 logger.info(
-                    f"Prefetch window for {service_name}: {prefetch_window} "
+                    f"Window size for {service_name}: {window_size} "
                     f"(total_layers={total_layers}, k={solution.k})"
                 )
             else:
                 # FIXME: how to handle?
                 logger.error(
-                    f"No layers assigned to {service_name}, setting prefetch to 1"
+                    f"No layers assigned to {service_name}, setting window size to 1"
                 )
-                prefetch_windows[service_name] = 1
+                window_sizes[service_name] = 1
 
         logger.info(f"Layer assignments (by rounds): {layer_assignments}")
-        # return layer_assignments, next_service_map, prefetch_windows
+        # return layer_assignments, next_service_map, window_size
 
         return [
             LayerAssignment(
                 service=name,
                 layers=layer_assignments[name],
                 next_service=next_service_map[name],
-                prefetch_window=prefetch_windows[name],
+                window_size=window_sizes[name],
             )
             for name in device_names
         ]

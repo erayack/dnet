@@ -59,7 +59,7 @@ class ChatBaseParams(BaseModel):
     top_p: Optional[float] = Field(default=1.0, ge=0, le=1)
     repetition_penalty: Optional[float] = Field(default=1.0, ge=0)
     repetition_context_size: Optional[int] = Field(default=20, ge=0)
-    logit_bias: Optional[Dict[int, float]] = {}
+    logit_bias: Optional[Dict[int, float]] = Field(default_factory=dict)
 
 
 class ChatParams(ChatBaseParams):
@@ -67,7 +67,7 @@ class ChatParams(ChatBaseParams):
 
     stream: Optional[bool] = False
     max_tokens: Optional[int] = Field(default=100, ge=0)
-    logit_bias: Optional[Dict[int, float]] = {}
+    logit_bias: Optional[Dict[int, float]] = Field(default_factory=dict)
     logprobs: Optional[int] = Field(default=-1)
     stop: Optional[Union[str, List[str]]] = []
     profile: Optional[bool] = False
@@ -94,8 +94,8 @@ class ChatRequestModel(ChatParams):
 class ChatLogProp(BaseModel):
     """Log probabilities for chat completion."""
 
-    token_logprobs: Optional[List[float]] = Field(default=[])
-    top_logprobs: Optional[List[Dict[int, float]]] = Field(default=[])
+    token_logprobs: Optional[List[float]] = Field(default_factory=list)
+    top_logprobs: Optional[List[Dict[int, float]]] = Field(default_factory=list)
     tokens: Optional[List[int]] = None
 
 
@@ -206,11 +206,6 @@ class PrepareTopologyRequest(BaseModel):
 
 class PrepareTopologyResponse(TopologyInfo):
     pass
-
-
-# ------------------------
-# Model Loading API
-# ------------------------
 
 
 class APILoadModelRequest(BaseModel):
