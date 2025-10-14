@@ -355,10 +355,9 @@ class Qwen3RingModel(BaseRingModel):
             first_key = list(shard_weights.keys())[0]
             logger.info("First weight to load: %s with shape %s", first_key, shard_weights[first_key].shape)
 
-            # Check what layer this is for
             if "layers." in first_key:
                 layer_idx = first_key.split(".")[1]
-                logger.info("Loading into local layer %d", layer_idx)
+                logger.info("Loading into local layer %s", layer_idx)
                 logger.info("Number of layers in model: %d", len(self.layers))
                 if int(layer_idx) < len(self.layers):
                     layer = self.layers[int(layer_idx)]
