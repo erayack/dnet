@@ -31,9 +31,9 @@ from dsolver import (
     halda_solve,
     ModelProfile,
     load_model_profile_from_dict,
-    load_device_profile_from_dict,
+    load_device_profile_from_dict
 )
-from dsolver.gurobi_solver import HALDAResult
+from dsolver.components.dense_common import HALDAResult
 
 from ...protos.dnet_ring_pb2_grpc import DnetRingServiceStub
 from ...protos.shard_api_comm_pb2_grpc import (
@@ -928,7 +928,7 @@ class RingApiNode:
                             response.json()
                         )
                         profile = load_device_profile_from_dict(profile_data.profile)
-                        logger.info(f"Successfully collected profile from {shard_name}")
+                        logger.info("Successfully collected profile from %s", shard_name)
 
                         # Mark head device (same local IP as API)
                         if shard_props.local_ip == this_device.local_ip:
@@ -937,15 +937,12 @@ class RingApiNode:
                         # FIXME: DeviceProfileInfo to DeviceProfile should be better
                         shard_profiles[shard_name] = profile
                     else:
-                        logger.error(
-                            f"Failed to get profile from {shard_name}: "
-                            f"{response.status_code}"
-                        )
+                        logger.error("Failed to get profile from %s: %s", shard_name, response.status_code)
 
                 except Exception as e:
-                    logger.exception(f"Error calling /profile for {shard_name}: {e}")
+                    logger.exception("Error calling /profile for %s: %s", shard_name, e)
 
-        logger.info(f"Collected profiles from {len(shard_profiles)} shards")
+        logger.info("Collected profiles from %d shards", len(shard_profiles))
         return shard_profiles, all_thunderbolts
 
     # FIXME: move this to elsewhere
