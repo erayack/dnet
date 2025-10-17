@@ -188,7 +188,7 @@ class RingShardNode(ComputeMixin, PrefetchMixin, SendMixin, StartupMixin):
         # Per-nonce KV caches (concurrent requests)
         self._kv_by_nonce: Dict[str, list] = {}
         self._kv_last_seen: Dict[str, float] = {}
-        self._kv_ttl_s: float = max(1.0, float(self.config.kv_ttl_s))
+        self._kv_ttl_s: float = max(1.0, float(self.config.kv_cache.kv_ttl_s))
 
         logger.info(
             "Shard node %s initialized with queue_size=%d",

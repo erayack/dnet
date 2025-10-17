@@ -21,6 +21,7 @@ class KVCacheConfig:
     mode: str = "fp16"
     bits: int = 8
     group_size: int = 64
+    kv_ttl_s: float = 30.0
 
 
 @dataclass
@@ -55,7 +56,6 @@ class ShardConfig:
     # IO & wire
     file_io_direct: bool = False  # mmapped direct IO (bypass caching)
     wire_dtype: str = "fp16"  # fp16 | bf16
-    kv_ttl_s: float = 30.0  # KV store TTL for cross-node comms
 
     # Warmup
     warmup_windows: int = 1
@@ -91,7 +91,6 @@ class ShardConfig:
                 prefetch_budget_ms=25.0,
                 file_io_direct=False,
                 wire_dtype="fp16",
-                kv_ttl_s=30.0,
                 warmup_windows=1,
             )
         # Default: fit-in-memory preset
@@ -109,6 +108,5 @@ class ShardConfig:
             prefetch_budget_ms=25.0,
             file_io_direct=False,
             wire_dtype="fp16",
-            kv_ttl_s=30.0,
             warmup_windows=1,
         )
