@@ -270,11 +270,6 @@ class APILoadModelResponse(BaseModel):
     )
 
 
-# ------------------------
-# Model Unloading API
-# ------------------------
-
-
 # FIXME: move elsewhere
 class ShardUnloadStatus(BaseModel):
     """Unload status for a single shard."""
