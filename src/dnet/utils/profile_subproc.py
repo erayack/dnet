@@ -59,4 +59,3 @@ def profile_device_via_subprocess(
     if isinstance(obj, dict) and obj.get("_error"):
         raise RuntimeError(f"device profiler failed: {obj['_error']}")
     return obj
-

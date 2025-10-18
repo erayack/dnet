@@ -74,10 +74,11 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    logger.info("Starting shard server on gRPC port %s, HTTP port %s", 
-                args.grpc_port, 
-                args.http_port
-                )
+    logger.info(
+        "Starting shard server on gRPC port %s, HTTP port %s",
+        args.grpc_port,
+        args.http_port,
+    )
     asyncio.run(
         serve(
             args.grpc_port,

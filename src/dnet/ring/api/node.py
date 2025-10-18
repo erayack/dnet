@@ -412,8 +412,11 @@ class RingApiNode:
             solution=asdict(solution),
         )
 
-        logger.info("Topology prepared: %d devices, %d layers", 
-                    len(shards_list), model_metadata.num_layers)
+        logger.info(
+            "Topology prepared: %d devices, %d layers",
+            len(shards_list),
+            model_metadata.num_layers,
+        )
 
         return self.topology
 
@@ -932,7 +935,7 @@ class RingApiNode:
             "Model %s: embedding_size=%d, payload_sizes=%s",
             repo_id,
             embedding_size,
-            payload_sizes
+            payload_sizes,
         )
 
         # Find Thunderbolt connections
@@ -945,8 +948,7 @@ class RingApiNode:
             for shard_name, shard_props in shards.items():
                 if shard_props.is_manager:
                     logger.warning(
-                        "Skipping manager node %s in profile collection",
-                        shard_name
+                        "Skipping manager node %s in profile collection", shard_name
                     )
                     continue
 
@@ -957,7 +959,7 @@ class RingApiNode:
                     logger.info(
                         "Calling /profile endpoint for shard %s at %s",
                         shard_name,
-                        shard_url
+                        shard_url,
                     )
 
                     response = await client.post(
@@ -1166,7 +1168,9 @@ class RingApiNode:
         if len(device_names) == 1:
             # Single device: forwards to itself in a loop
             next_service_map[device_names[0]] = device_names[0]
-            logger.info("Ring (single device): %s -> SELF (loops back)", device_names[0])
+            logger.info(
+                "Ring (single device): %s -> SELF (loops back)", device_names[0]
+            )
         else:
             # Multiple devices: each forwards to the next in the ring
             for i, service_name in enumerate(device_names):
@@ -1179,7 +1183,9 @@ class RingApiNode:
 
             # Log ring topology
             for service_name in device_names:
-                logger.info("Ring: %s -> %s", service_name, next_service_map[service_name])
+                logger.info(
+                    "Ring: %s -> %s", service_name, next_service_map[service_name]
+                )
 
         # Compute window size for each device: total_layers_per_device / k
         window_sizes: Dict[str, int] = {}

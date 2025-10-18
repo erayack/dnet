@@ -262,7 +262,11 @@ class RingShardNode(ComputeMixin, PrefetchMixin, SendMixin, StartupMixin):
 
             self._mode = "fit" if requested_w >= local_count else "offload"
             self.config = ShardConfig.for_mode(self._mode)  # Reset config
-            eff_window_size = local_count if (self._mode == "fit") else max(1, min(requested_w, local_count))
+            eff_window_size = (
+                local_count
+                if (self._mode == "fit")
+                else max(1, min(requested_w, local_count))
+            )
             self.window_size = eff_window_size
 
             logger.info(
@@ -272,7 +276,7 @@ class RingShardNode(ComputeMixin, PrefetchMixin, SendMixin, StartupMixin):
                 requested_w,
                 local_count,
                 getattr(self.config, "mode", "fit"),
-                self._mode
+                self._mode,
             )
 
             # Initialize weight cache

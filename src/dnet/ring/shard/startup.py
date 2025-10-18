@@ -347,9 +347,7 @@ class StartupMixin:
                 logger.error("/warm failed: %s", e)
                 return JSONResponse(status_code=500, content={"error": str(e)})
 
-    async def _profile_device(
-        self, repo_id: str, max_batch_exp: int
-    ) -> dict:
+    async def _profile_device(self, repo_id: str, max_batch_exp: int) -> dict:
         """Profile device using dperf in a subprocess and return a dict.
 
         Args:
