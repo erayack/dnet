@@ -14,8 +14,6 @@ from grpc import aio as aio_grpc
 
 from hypercorn import Config
 import hypercorn.asyncio as aio_hypercorn
-from dperf import DeviceProfileInfo, profile_device
-from dataclasses import asdict
 from dnet_p2p.thunderbolt import ThunderboltConnection
 from dnet_p2p import (
     DnetDeviceProperties,
@@ -262,21 +260,21 @@ class StartupMixin:
                     req.repo_id, req.max_batch_exp
                 )
 
-                # Overwrite `t_comm` with median latency
+                # Overwrite `t_comm` with median latency (subprocess returns a dict)
                 median_latency = calculate_median_latency_seconds(latency_results)
                 if median_latency is not None:
-                    device_profile.t_comm = median_latency
+                    device_profile["t_comm"] = float(median_latency)
                     logger.info(
-                        f"Set t_comm to median latency: {device_profile.t_comm:.6f}s"
+                        f"Set t_comm to median latency: {device_profile['t_comm']:.6f}s"
                     )
                 else:
                     logger.warning(
                         "No valid latency measurements, keeping default t_comm"
                     )
 
+                # Return the dict payload directly
                 return ShardProfileResponse(
-                    # FIXME: asdict because this is `dataclass`
-                    profile=asdict(device_profile),
+                    profile=device_profile,
                     latency=latency_results,
                 )
             except Exception as e:
@@ -351,21 +349,23 @@ class StartupMixin:
 
     async def _profile_device(
         self, repo_id: str, max_batch_exp: int
-    ) -> DeviceProfileInfo:
-        """Profile device using dperf.
+    ) -> dict:
+        """Profile device using dperf in a subprocess and return a dict.
 
         Args:
             repo_id: Hugging Face repository ID
             max_batch_exp: Maximum batch size exponent (2^max_batch_exp)
 
         Returns:
-            Device profile information
+            Device profile information as a plain dict
         """
-        device_profile: DeviceProfileInfo = profile_device(
-            repo_id, max_batch_exp=max_batch_exp
+        from ...utils.profile_subproc import profile_device_via_subprocess
+
+        profile_dict = profile_device_via_subprocess(
+            repo_id, max_batch_exp=max_batch_exp, debug=0
         )
         logger.info("Device profiling completed for node %s", self.node_id)
-        return device_profile
+        return profile_dict
 
     async def _connect_next_node(self) -> bool:
         """Connect to next node in ring.
