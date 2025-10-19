@@ -21,6 +21,7 @@ class Qwen3RingModel(BaseRingModel):
         model_config: Any,
         assigned_layers: Optional[List[int]] = None,
         is_api_layer: bool = False,
+        shard_config: Optional[Any] = None,
     ):
         super().__init__()
 
@@ -131,21 +132,12 @@ class Qwen3RingModel(BaseRingModel):
         # When enabled, we replace all per-layer params with tiny placeholders
         # at construction time; real arrays are bound only when weights are
         # loaded for the active window. On eviction, we shrink them again.
-        import os as _os
-
-        try:
-            self._lazy_params = _os.getenv("RING_LAZY_PARAMS", "0").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-        except Exception:
-            self._lazy_params = False
+        # Use ShardConfig instead of environment variables
+        self._lazy_params = bool(getattr(shard_config, "lazy_params", False))
         # Do not shrink params for quantized models; conversion relies on real shapes
         if self.is_quantized and self._lazy_params:
             logger.info(
-                "Ignoring RING_LAZY_PARAMS for quantized model to preserve parameter shapes"
+                "Ignoring lazy_params for quantized model to preserve parameter shapes"
             )
             self._lazy_params = False
         if (not self.is_api_layer) and self._lazy_params:
@@ -160,40 +152,7 @@ class Qwen3RingModel(BaseRingModel):
         # Compiled window cache: absolute-layer tuple -> compiled forward fn
         # not used yet
         self._compiled_windows: dict[tuple[int, ...], Any] = {}
-        # Runtime KVCache
-        self._runtime_cache: Optional[List[Any]] = None
-
-    def set_runtime_cache(self, cache: Optional[List[Any]]) -> None:
-        """Set the runtime KV cache reference for compiled decode windows."""
-        self._runtime_cache = cache
-
-    @staticmethod
-    def class_predicate(p, m):
-        return hasattr(m, "to_quantized")
-
-    def apply_quantization(self):
-        """Apply quantization after weights are loaded"""
-        # Skip if this is the API layer
-        if self.is_api_layer:
-            return
-
-        # Check if model is already quantized by checking if any Linear layers are QuantizedLinear
-        from mlx.nn.layers.quantized import QuantizedLinear
-
-        for layer in self.layers:
-            for module in layer.modules():
-                if isinstance(module, QuantizedLinear):
-                    # Model is already quantized, skip re-quantization
-                    return
-
-        # Only quantize if not already quantized and quantization config exists
-        if "quantization" in self.model_config:
-            quant_config = self.model_config["quantization"].copy()
-            nn.quantize(
-                self,
-                **quant_config,
-                class_predicate=Qwen3RingModel.class_predicate,
-            )
+        # Removed: set_runtime_cache, apply_quantization, class_predicate (unused)
 
     def _shrink_linear_like(self, mod):
         try:

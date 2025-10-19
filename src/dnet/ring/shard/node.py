@@ -296,6 +296,7 @@ class RingShardNode(ComputeMixin, PrefetchMixin, SendMixin, StartupMixin):
                 self.model_metadata.model_type,
                 self.model_metadata.model_config,
                 assigned_layers=self.assigned_layers,
+                shard_config=self.config,
             )
             self.model.eval()
             self.cache = make_cache(
