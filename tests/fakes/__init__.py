@@ -52,6 +52,9 @@ from .streams import FakeStreamAck, FakeStreamCall
 from .solver import FakeSolver, FakeBadSolver
 from .mp import FakeMPConn, FakeMPProc, FakeMPContext
 
+# Loopback fakes for pipelined ring tests
+from .loopback import LoopbackRingStub, SimulatedStreamCtx, SlowFakeRuntime
+
 # explicit __all__ so ruff recognizes intentional re-exports
 __all__ = [
     "FakeProps",
@@ -98,6 +101,9 @@ __all__ = [
     "FakeMPConn",
     "FakeMPProc",
     "FakeMPContext",
+    "LoopbackRingStub",
+    "SimulatedStreamCtx",
+    "SlowFakeRuntime",
 ]
 
 """ ruff can't detect this

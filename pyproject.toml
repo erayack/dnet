@@ -102,3 +102,8 @@ mypy_path = ["src"]
   "requests",
   ]
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+]

@@ -167,6 +167,16 @@ class RingAdapter(TopologyAdapter):
             except asyncio.CancelledError:
                 break
             try:
+                # Ensure fake runtimes that need a worker get one without explicit test startup
+                if hasattr(self.runtime, "ensure_worker_started"):
+                    try:
+                        await self.runtime.ensure_worker_started()
+                    except Exception:
+                        logger.debug(
+                            "Ingress worker: failed to start runtime worker",
+                            exc_info=True,
+                        )
+
                 await self._connect_next_node()
 
                 activation = req.activation
@@ -412,6 +422,7 @@ class RingAdapter(TopologyAdapter):
         Returns:
             True if connected or no next node, False on failure
         """
+        address = "<unknown>"
         if not self.next_node:
             logger.info(
                 "Shard %s is the final shard (no next node)", self.runtime.shard_id

@@ -142,3 +142,200 @@ def patch_ring_grpc_client_ok(monkeypatch):
         return seen_addr
 
     return _apply
+
+
+@pytest.fixture
+def loopback_ring_pipeline(monkeypatch):
+    """Wire N RingAdapters in a loopback ring for pipelined testing.
+
+    Returns a function that accepts:
+        - n_nodes: number of nodes in the ring
+        - compute_delays: list of compute_delay_s for each node
+        - assigned_layers: list of sets of layer IDs for each node
+
+    Returns: (adapters, runtimes, delivery_log_dict)
+    """
+
+    def _build_pipeline(
+        n_nodes: int = 3,
+        compute_delays: list[float] = None,
+        assigned_layers: list[set] = None,
+    ):
+        from tests.fakes import (
+            FakeDiscovery,
+            FakeChannel,
+            SlowFakeRuntime,
+            LoopbackRingStub,
+            SimulatedStreamCtx,
+        )
+        from dnet.shard.adapters.ring import RingAdapter
+        from dnet.shard.config import TransportConfig
+        from collections import defaultdict
+
+        if compute_delays is None:
+            compute_delays = [0.0] * n_nodes
+        if assigned_layers is None:
+            assigned_layers = [set() for _ in range(n_nodes)]
+
+        # Create runtimes and adapters
+        runtimes = []
+        adapters = []
+        delivery_log = defaultdict(list)
+
+        for i in range(n_nodes):
+            rt = SlowFakeRuntime(
+                shard_id=f"S{i}",
+                max_queue_size=16,
+                assigned_next=assigned_layers[i],
+                compute_delay_s=compute_delays[i],
+            )
+            disc = FakeDiscovery({})
+            cfg = TransportConfig(streaming=True)
+            ad = RingAdapter(runtime=rt, discovery=disc, transport_config=cfg)
+            runtimes.append(rt)
+            adapters.append(ad)
+
+        # Wire them in a ring via loopback stubs
+        for i in range(n_nodes):
+            next_idx = (i + 1) % n_nodes
+            target_adapter = adapters[next_idx]
+
+            # Create loopback stub with shared delivery log
+            loopback_stub = LoopbackRingStub(target_adapter, shared_log=delivery_log)
+
+            # Patch the adapter to use loopback stub
+            adapters[i].next_node_stub = loopback_stub
+
+            # Create fake channel
+            fake_channel = FakeChannel(f"loopback-{i}-to-{next_idx}")
+            adapters[i].next_node_channel = fake_channel
+
+            # Patch _streams.get_or_create_stream to return SimulatedStreamCtx
+            async def _patched_get_or_create(nonce, call_factory, _ad=adapters[i]):
+                existing = _ad._streams.get_ctx(nonce)
+                if existing and getattr(existing, "open", False):
+                    try:
+                        loop = asyncio.get_running_loop()
+                        if existing.disabled and loop.time() >= existing.disabled_until:
+                            existing.disabled = False
+                    except Exception:
+                        pass
+                    return existing
+
+                if existing:
+                    try:
+                        existing.open = False
+                        try:
+                            existing.queue.put_nowait(None)
+                        except asyncio.QueueFull:
+                            await existing.queue.put(None)
+                    except Exception:
+                        pass
+                    try:
+                        if existing.ack_task:
+                            existing.ack_task.cancel()
+                    except Exception:
+                        pass
+
+                # Create simulated context
+                ctx = SimulatedStreamCtx(nonce)
+                _ad._streams._streams[nonce] = ctx
+
+                # Start the call_factory with the context's queue as iterator
+                async def _req_iter():
+                    while True:
+                        item = await ctx.queue.get()
+                        if item is None:
+                            break
+                        yield item
+
+                ctx.call = call_factory(_req_iter())
+                ctx.open = True
+                ctx.last_activity_t = asyncio.get_running_loop().time()
+
+                # Drive the async generator to pump frames through the loopback stub
+                async def _consume_responses():
+                    try:
+                        async for ack in ctx.call:
+                            accepted = getattr(ack, "accepted", None)
+                            if accepted is None:
+                                accepted = True
+                            ctx.acks.append(
+                                (
+                                    getattr(ack, "seq", None),
+                                    accepted,
+                                )
+                            )
+                    except Exception:
+                        # Stream closed or error - normal in tests
+                        pass
+                    finally:
+                        ctx.open = False
+
+                # Start the consumer task to drive frame delivery
+                ctx.ack_task = asyncio.create_task(_consume_responses())
+
+                return ctx
+
+            adapters[i]._streams.get_or_create_stream = _patched_get_or_create
+
+        return adapters, runtimes, delivery_log
+
+    return _build_pipeline
+
+
+@pytest.fixture
+def make_activation_request():
+    """Helper to build ActivationRequest/ActivationMessage pairs for tests.
+
+    Returns a function that accepts:
+        - nonce: request nonce
+        - layer_id: layer identifier
+        - shape: tensor shape (default: (1, 512))
+        - dtype: data type (default: "float16")
+        - req_top_logprobs: top logprobs count (default: 0)
+        - callback_url: callback URL (default: "")
+
+    Returns: ActivationRequest proto
+    """
+
+    def _build(
+        nonce: str,
+        layer_id: int,
+        shape: tuple = (1, 512),
+        dtype: str = "float16",
+        req_top_logprobs: int = 0,
+        callback_url: str = "",
+    ):
+        import numpy as np
+        from dnet.protos.dnet_ring_pb2 import Activation, ActivationRequest
+
+        # Create small zeros buffer to avoid memory issues
+        if dtype == "float16":
+            data = np.zeros(shape, dtype=np.float16).tobytes()
+        elif dtype == "float32":
+            data = np.zeros(shape, dtype=np.float32).tobytes()
+        else:
+            data = np.zeros(shape, dtype=np.float32).tobytes()
+
+        activation = Activation(
+            data=data,
+            batch_size=shape[0],
+            shape=list(shape),
+            dtype=dtype,
+            layer_id=layer_id,
+        )
+
+        request = ActivationRequest(
+            nonce=nonce,
+            activation=activation,
+            timestamp=int(asyncio.get_event_loop().time() * 1000),
+            node_origin="test",
+            callback_url=callback_url,
+            logprobs=False,
+            top_logprobs=req_top_logprobs,
+        )
+
+        return request
+
+    return _build
