@@ -46,10 +46,12 @@ cuda = ["mlx[cuda]"]
 dev = [
   "openai>=2.6.0", # for OpenAI compatibility tests
   "pytest>=8.4.2",
+  "python-dotenv>=1.0.0",
   "mypy>=1.3.0",  # Type checking
   "ruff>=0.0.285",
   "types-psutil>=7.1.3",
   "pre-commit>=4.5.0",  # Git hooks
+  "requests>=2.31.0",  # for integration tests
 ]
 [project.scripts]
 dnet-api = "cli.api:main"
@@ -76,6 +78,7 @@ markers = [
   "codec: tests for activation codec serialize/deserialize",
   "core: tests for core memory/cache/utils not tied to api/shard",
   "e2e: integration tests requiring live servers or multiple components",
+  "integration: model catalog integration tests for CI (manual trigger)",
 ]
 
 [tool.ruff]
